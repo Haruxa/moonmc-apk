@@ -61,6 +61,15 @@ jobs:
           echo "  вход android.rs:              $(test -f crates/horizon-client/src/android.rs && echo есть || echo НЕТ)"
           echo "  crates/horizon-android:       $(test -d crates/horizon-android && echo есть || echo НЕТ)"
 
+      - name: Зафиксировать ревизию дерева
+        run: |
+          # horizon-mixins берёт ревизию из <root>/.horizon-revision (plan.rs:330),
+          # иначе из git rev-parse HEAD. Дерево = пин + коммиты MargyMC, поэтому пишем
+          # фактический HEAD: цель пина — те же исходники, а корректность инъекций
+          # проверяется самим apply (нет анкора -> ошибка) и компиляцией.
+          git -C src rev-parse HEAD | tee src/.horizon-revision
+          echo "== пин мода ожидает: $(grep -h 'horizon' mods.incoming/mixins/*/horizon-mixin.toml 2>/dev/null | head -2)"
+
       - name: Собрать горизонт-миксины
         run: |
           git clone --quiet https://github.com/horizon-rust/horizon-mixins mixins
