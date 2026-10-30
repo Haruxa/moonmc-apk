@@ -49,6 +49,12 @@ jobs:
 
       - name: horizon-mixins apply
         run: |
+          echo "== CLI:"; horizon-mixins apply --help 2>&1 | head -30 || true
+          ours=$(git -C src rev-parse HEAD)
+          echo "== наш коммит: $ours"
+          echo "== пин в бандле — перенацеливаем на наш коммит:"
+          sed -i "s/^horizon_revision = .*/horizon_revision = \"$ours\"/" mods.incoming/fps_overlay/horizon-mixin.toml
+          grep -n 'horizon_revision' mods.incoming/fps_overlay/horizon-mixin.toml
           horizon-mixins apply --workspace src --mods mods.incoming --out stage
           echo "== изменённые файлы:"; (cd stage && find . -type f | sort)
 
