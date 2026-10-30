@@ -22,7 +22,6 @@
 import pathlib
 import sys
 
-SDK_MARK = "MargyMC-CI v3"
 
 EDITS = [
     (
@@ -130,7 +129,8 @@ def main() -> int:
     failed = False
     for path, original, patched in EDITS:
         text = path.read_text()
-        if SDK_MARK in text and patched in text:
+        # заменённый текст сам служит маркером: так пропуск работает и после смены версии
+        if patched in text:
             print(f"{path}: патч уже наложен, пропускаю")
             continue
         if original not in text:
@@ -143,7 +143,7 @@ def main() -> int:
     if failed:
         return 1
     print(
-        "MargyMC-CI v3: папка игры /sdcard/MargyMC/horizon, JRE и tmp — в приватном хранилище,"
+        "MargyMC-CI v4: папка игры /sdcard/MargyMC/horizon, JRE и tmp — в приватном хранилище,"
         " файловые локи FUSE (flock) не считаются занятостью мира и не глушат latest.log"
     )
     return 0
