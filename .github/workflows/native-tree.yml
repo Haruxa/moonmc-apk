@@ -35,7 +35,7 @@ jobs:
           find mods.incoming -maxdepth 1 -type d | sed 's/^/  папка: /'
           ls -la mods.incoming/* | head -10
 
-      - name: Дерево: пин + Android-порт
+      - name: "Дерево: пин + Android-порт"
         id: tree
         run: |
           git clone --quiet https://github.com/horizon-rust/horizon src
