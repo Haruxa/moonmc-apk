@@ -33,6 +33,13 @@ jobs:
       - name: Сборка horizon-mixins
         run: cargo install --locked --git https://github.com/horizon-rust/horizon-mixins --rev "${{ inputs.mixins_rev }}"
 
+      - name: Убрать симлинки (horizon-mixins их не принимает)
+        run: |
+          echo "== симлинки в дереве:"
+          find src -type l -printf '%p -> %l\n' | head -20
+          find src -type l -delete
+          echo "осталось симлинков: $(find src -type l | wc -l)"
+
       - name: Распаковка бандла
         run: |
           mkdir -p mods.incoming tmp
