@@ -88,7 +88,8 @@ jobs:
           # horizon-mixins требует единственного владельца файла -> на время apply
           # убираем android.rs и возвращаем его в src-out после инъекций.
           ANDROID=crates/horizon-client/src/android.rs
-          cp "src/$ANDROID" /tmp/android.rs.bak && rm "src/$ANDROID"
+          cp "src/$ANDROID" /tmp/android.rs.bak
+          printf '// stub: при apply game.rs должен иметь единственного владельца\nfn stub() {}\n' > "src/$ANDROID"
           echo "== владельцы game.rs: $(grep -rln '^mod game;' --include=*.rs src/crates | tr '\n' ' ')"
           echo "== манифесты: $(find $MODS -name 'horizon-mixin.toml' | wc -l)"
           # horizon-mixins не умеет симлинки в дереве исходников (CLAUDE.md -> AGENTS.md),
