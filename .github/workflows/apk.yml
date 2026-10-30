@@ -1,7 +1,9 @@
 # Этап 2: полный APK с фичей `mods`.
-# Нужен архив с твоей папкой .minecraft (26.3) в Release этого же приватного репозитория:
-#   .minecraft/versions/26.3/26.3.jar, libraries/, assets/, и server.jar от 26.3
-# Ничего от Mojang не публикуется: приватный репо, приватный Release, артефакт только для тебя.
+# Нужен архив с папкой Minecraft 26.3 в Release этого же приватного репозитория:
+#   versions/26.3/26.3.jar, libraries/, assets/ и server.jar
+# Репозиторий приватный, Release приватный, артефакт доступен только тебе.
+#
+# Две job-ы: prepare (мало места, кэш отдельный) → apk (полная сборка).
 name: apk
 
 on:
@@ -25,22 +27,112 @@ on:
         type: boolean
         default: true
       mc_asset:
-        description: "Имя zip-ассета с .minecraft в Release (пусто = первый *.zip)"
+        description: "Имя zip-ассета с Minecraft в Release (пусто = первый *.zip)"
         required: false
         default: ""
-      skip_prepare:
-        description: "В ассете уже готовый .local/exporters — prepare не запускать"
-        type: boolean
-        default: false
 
 defaults:
   run:
     shell: bash
 
 jobs:
-  apk:
+  prepare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 300
+    timeout-minutes: 150
+    steps:
+      - name: Окружение раннера
+        run: |
+          echo "cpu=$(nproc)"; free -h; df -h /
+          echo "NDK=${ANDROID_NDK_LATEST_HOME:-}"; java -version 2>&1 | head -3
+
+      - name: Освободить место на диске
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/az \
+                      "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - name: Скачать исходники MargyMC
+        run: |
+          mkdir -p src && cd src
+          curl -fsSL --retry 3 -o s.tgz "${{ inputs.source_url }}/archive/${{ inputs.source_ref }}.tar.gz"
+          tar xzf s.tgz --strip-components=1 && rm -f s.tgz
+          ls research-lock.json
+
+      - name: Rust
+        run: |
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+          . "$HOME/.cargo/env"; rustc -vV
+
+      - name: Кэш registry + target(prepare)
+        uses: actions/cache@v4
+        with:
+          path: |
+            src/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: prepare-${{ inputs.source_ref }}-${{ hashFiles('src/Cargo.lock') }}
+          restore-keys: check-${{ inputs.source_ref }}-
+
+      - name: JDK 25 (для horizon-prepare)
+        run: |
+          curl -fsSL -o /tmp/jdk25.tgz "https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jdk/hotspot/normal/eclipse"
+          mkdir -p "$RUNNER_TEMP/jdk25" && tar xzf /tmp/jdk25.tgz -C "$RUNNER_TEMP/jdk25" --strip-components=1
+          "$RUNNER_TEMP/jdk25/bin/java" -version 2>&1 | head -2
+          echo "JDK25=$RUNNER_TEMP/jdk25" >> "$GITHUB_ENV"
+
+      - name: Файлы Minecraft из Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/raw "$RUNNER_TEMP/mc"
+          if [ -n "${{ inputs.mc_asset }}" ]; then
+            gh release download --pattern "${{ inputs.mc_asset }}" --dir /tmp/raw --clobber
+          else
+            gh release download --pattern '*.zip' --dir /tmp/raw --clobber
+          fi
+          ls -l /tmp/raw
+          for z in /tmp/raw/*.zip; do unzip -oq "$z" -d "$RUNNER_TEMP/mc"; done
+          rm -rf /tmp/raw
+          [ -d "$RUNNER_TEMP/mc/.minecraft" ] && mv "$RUNNER_TEMP/mc/.minecraft" "$RUNNER_TEMP/mc/mc"
+          MC="$RUNNER_TEMP/mc"
+          [ -d "$MC/minecraft" ] && MC="$MC/minecraft"
+          echo "MC=$MC" >> "$GITHUB_ENV"
+          echo "== содержимое:"; ls "$MC"; du -sh "$MC"/* | head
+          test -f "$MC/versions/26.3/26.3.jar" || { echo "::error::нет $MC/versions/26.3/26.3.jar"; exit 1; }
+          df -h /
+
+      - name: horizon-prepare --prepare
+        working-directory: src
+        run: |
+          set -o pipefail
+          . "$HOME/.cargo/env"
+          cargo build --locked --release -p horizon-prepare 2>&1 | tail -3
+          SRV=$(find "$MC" -maxdepth 3 -name 'server*.jar' | head -1 || true)
+          echo "mc=$MC  server=${SRV:-<нет>}"
+          ARGS=(--prepare --minecraft-dir "$MC" --root "$GITHUB_WORKSPACE")
+          [ -n "$SRV" ] && ARGS+=(--server-jar "$SRV")
+          JAVA_HOME="$JDK25" PATH="$JDK25/bin:$PATH" \
+            target/release/horizon-prepare "${ARGS[@]}" 2>&1 | tail -80
+          echo "== exporters:"; find .local/exporters -maxdepth 2 | head -20
+          df -h /
+
+      - name: Упаковать exporters
+        working-directory: src
+        run: |
+          tar czf "$RUNNER_TEMP/exporters.tgz" -C .local exporters
+          ls -lh "$RUNNER_TEMP/exporters.tgz"
+
+      - name: Артефакт exporters
+        uses: actions/upload-artifact@v4
+        with:
+          name: exporters
+          path: ${{ runner.temp }}/exporters.tgz
+          if-no-files-found: error
+
+  apk:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
     steps:
       - name: Окружение раннера
         run: |
@@ -52,26 +144,22 @@ jobs:
       - name: Освободить место на диске
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/az \
-                      "$AGENT_TOOLSDIRECTORY" /usr/local/lib/android/sdk/system-images || true
+                      "$AGENT_TOOLSDIRECTORY" || true
           df -h /
 
       - name: Скачать исходники MargyMC
         run: |
           mkdir -p src && cd src
-          curl -fsSL --retry 3 -o source.tar.gz "${{ inputs.source_url }}/archive/${{ inputs.source_ref }}.tar.gz"
-          tar xzf source.tar.gz --strip-components=1
-          rm -f source.tar.gz
-          ls | head -30
+          curl -fsSL --retry 3 -o s.tgz "${{ inputs.source_url }}/archive/${{ inputs.source_ref }}.tar.gz"
+          tar xzf s.tgz --strip-components=1 && rm -f s.tgz
 
       - name: Rust + цель aarch64-linux-android
-        working-directory: src
         run: |
           curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
-          . "$HOME/.cargo/env"
-          rustc -vV
+          . "$HOME/.cargo/env"; rustc -vV
           rustup target add aarch64-linux-android
 
-      - name: Кэш target и registry
+      - name: Кэш target + registry
         uses: actions/cache@v4
         with:
           path: |
@@ -80,52 +168,20 @@ jobs:
             ~/.cargo/git
           key: apk-${{ inputs.profile }}-${{ inputs.mods }}-${{ inputs.source_ref }}-${{ hashFiles('src/Cargo.lock') }}
           restore-keys: |
-            check-${{ inputs.source_ref }}-
+            modcheck-${{ inputs.source_ref }}-
 
-      - name: JDK 25 для horizon-prepare
-        if: ${{ !inputs.skip_prepare }}
-        run: |
-          curl -fsSL -o /tmp/jdk25.tgz "https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jdk/hotspot/normal/eclipse"
-          mkdir -p "$RUNNER_TEMP/jdk25" && tar xzf /tmp/jdk25.tgz -C "$RUNNER_TEMP/jdk25" --strip-components=1
-          "$RUNNER_TEMP/jdk25/bin/java" -version 2>&1 | head -2
-          echo "JDK25=$RUNNER_TEMP/jdk25" >> "$GITHUB_ENV"
+      - name: Забрать exporters из job prepare
+        uses: actions/download-artifact@v4
+        with:
+          name: exporters
+          path: ${{ runner.temp }}
 
-      - name: Файлы Minecraft из Release
-        working-directory: src
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p /tmp/mc-raw
-          if [ -n "${{ inputs.mc_asset }}" ]; then
-            gh release download --pattern "${{ inputs.mc_asset }}" --dir /tmp/mc-raw --clobber
-          else
-            gh release download --pattern '*.zip' --dir /tmp/mc-raw --clobber
-          fi
-          ls -la /tmp/mc-raw
-          mkdir -p "$RUNNER_TEMP/mc"
-          for z in /tmp/mc-raw/*.zip; do unzip -oq "$z" -d "$RUNNER_TEMP/mc"; done
-          if [ -d "$RUNNER_TEMP/mc/.minecraft" ]; then mv "$RUNNER_TEMP/mc/.minecraft" "$RUNNER_TEMP/mc/mc"; fi
-          ls "$RUNNER_TEMP/mc"
-          du -sh "$RUNNER_TEMP/mc"/* 2>/dev/null | head -10
-          echo "MC=$RUNNER_TEMP/mc" >> "$GITHUB_ENV"
-
-      - name: horizon-prepare --prepare
-        if: ${{ !inputs.skip_prepare }}
+      - name: Распаковать exporters
         working-directory: src
         run: |
-          set -o pipefail
-          . "$HOME/.cargo/env"
-          cargo build --locked --release -p horizon-prepare 2>&1 | tail -5
-          MC_DIR="$MC"; [ -d "$MC_DIR/minecraft" ] && MC_DIR="$MC_DIR/minecraft"
-          SRV=$(find "$MC" -maxdepth 3 -name 'server*.jar' | head -1 || true)
-          echo "minecraft-dir=$MC_DIR"; echo "server-jar=${SRV:-<нет>}"
-          test -f "$MC_DIR/versions/26.3/26.3.jar" || { echo "::error::в ассете нет versions/26.3/26.3.jar"; exit 1; }
-          ARGS=(--prepare --minecraft-dir "$MC_DIR" --root "$GITHUB_WORKSPACE")
-          [ -n "$SRV" ] && ARGS+=(--server-jar "$SRV")
-          JAVA_HOME="$JDK25" PATH="$JDK25/bin:$PATH" \
-            target/release/horizon-prepare "${ARGS[@]}" 2>&1 | tail -60
-          echo "== exporters:"; ls .local/exporters | head; ls .local | head
-          df -h /
+          mkdir -p .local
+          tar xzf "$RUNNER_TEMP/exporters.tgz" -C .local
+          find .local -maxdepth 2 | head -20
 
       - name: Сборка APK
         working-directory: src
@@ -134,7 +190,8 @@ jobs:
           MODS: ${{ inputs.mods && '1' || '0' }}
         run: |
           . "$HOME/.cargo/env"
-          bash ci/build-apk-modded.sh 2>&1 | tail -120
+          bash ci/build-apk-modded.sh 2>&1 | tail -150
+          df -h /
 
       - name: Артефакт
         if: always()
