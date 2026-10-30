@@ -3,7 +3,7 @@
 #   versions/26.3/26.3.jar, libraries/, assets/ и server.jar
 # Репозиторий приватный, Release приватный, артефакт доступен только тебе.
 #
-# Две job-ы: prepare (мало места, кэш отдельный) → apk (полная сборка).
+# Две job-ы: prepare (экспортёры из Minecraft, кэшируются) → apk (сборка с --features mods).
 name: apk
 
 on:
@@ -73,7 +73,15 @@ jobs:
           key: prepare-${{ inputs.source_ref }}-${{ hashFiles('src/Cargo.lock') }}
           restore-keys: check-${{ inputs.source_ref }}-
 
+      - name: Кэш exporters (пропускает импорт Minecraft при повторе)
+        id: ex
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/exporters.tgz
+          key: exporters-${{ inputs.source_ref }}-${{ hashFiles('src/Cargo.lock') }}
+
       - name: JDK 25 (для horizon-prepare)
+        if: steps.ex.outputs.cache-hit != 'true'
         run: |
           curl -fsSL -o /tmp/jdk25.tgz "https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jdk/hotspot/normal/eclipse"
           mkdir -p "$RUNNER_TEMP/jdk25" && tar xzf /tmp/jdk25.tgz -C "$RUNNER_TEMP/jdk25" --strip-components=1
@@ -81,6 +89,7 @@ jobs:
           echo "JDK25=$RUNNER_TEMP/jdk25" >> "$GITHUB_ENV"
 
       - name: Файлы Minecraft из Release
+        if: steps.ex.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -103,6 +112,7 @@ jobs:
           df -h /
 
       - name: horizon-prepare --prepare
+        if: steps.ex.outputs.cache-hit != 'true'
         working-directory: src
         run: |
           set -o pipefail
@@ -118,6 +128,7 @@ jobs:
           df -h /
 
       - name: Упаковать exporters
+        if: steps.ex.outputs.cache-hit != 'true'
         working-directory: src
         run: |
           tar czf "$RUNNER_TEMP/exporters.tgz" -C .local exporters
@@ -153,6 +164,15 @@ jobs:
           mkdir -p src && cd src
           curl -fsSL --retry 3 -o s.tgz "${{ inputs.source_url }}/archive/${{ inputs.source_ref }}.tar.gz"
           tar xzf s.tgz --strip-components=1 && rm -f s.tgz
+
+      - name: Скрипт сборки из нашего репозитория
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p src/ci
+          gh api "repos/${{ github.repository }}/contents/ci/build-apk-modded.sh?ref=${{ github.sha }}" \
+            -H "Accept: application/vnd.github.raw" > src/ci/build-apk-modded.sh
+          head -2 src/ci/build-apk-modded.sh; wc -l src/ci/build-apk-modded.sh
 
       - name: Rust + цель aarch64-linux-android
         run: |
