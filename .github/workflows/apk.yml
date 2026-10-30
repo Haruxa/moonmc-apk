@@ -266,6 +266,12 @@ jobs:
             unzip -o -q "/tmp/mod$i.hnmod" -d "mods.incoming/mod$i"
             echo "  мод $i: $(find mods.incoming/mod$i -name 'horizon-mixin.toml' | wc -l) манифест(ов)"
           done
+          # horizon-mixins не рекурсирует по каталогам: раскладываем все моды в одну папку
+          mkdir -p mods.incoming/mixins
+          for d in mods.incoming/mod*/; do
+            if [ -d "$d/mixins" ]; then cp -a "$d/mixins/." mods.incoming/mixins/; else cp -a "$d." mods.incoming/mixins/; fi
+          done
+          echo "  манифестов после раскладки: $(find mods.incoming/mixins -name 'horizon-mixin.toml' | wc -l)"
           test "$i" -gt 0
 
       - name: Вшить моды в дерево
@@ -281,7 +287,7 @@ jobs:
           cp "src/$ANDROID" /tmp/android.rs.bak
           printf 'fn stub() {}\n' > "src/$ANDROID"
           ./mixins/target/release/horizon-mixins apply \
-            --workspace src --mods mods.incoming --out src-out
+            --workspace src --mods mods.incoming/mixins --out src-out
           cp /tmp/android.rs.bak "src-out/$ANDROID"
           cp -a src/.local src-out/.local
           echo "== вшитые файлы: $(ls src-out/crates/horizon-client/src/game/ | grep -c official || true)"
