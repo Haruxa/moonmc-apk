@@ -23,7 +23,7 @@ BUILD_TOOLS=$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)
 # javac -source 8, d8 и keytool — JDK 17; horizon-prepare в этом скрипте не участвует.
 if ! "${JAVA_HOME:-/no}/bin/javac" -version 2>&1 | grep -q '^javac 17'; then
   for c in /usr/lib/jvm/*17* /usr/lib/jvm/*-17-*; do
-    [ -x "$c/bin/javac" ] && { JAVA_HOME=$c; break; }
+    if [ -x "$c/bin/javac" ]; then JAVA_HOME=$c; break; fi
   done
 fi
 export JAVA_HOME
@@ -41,7 +41,6 @@ echo "   NDK=$NDK"
 echo "   BUILD_TOOLS=$BUILD_TOOLS"
 echo "   JAVA_HOME=$JAVA_HOME ($("$JAVA_HOME/bin/java" -version 2>&1 | head -1))"
 echo "   PROFILE=$PROFILE MODS=$MODS"
-"$ANDROID_HOME"/platforms/*/android.jar >/dev/null 2>&1 || true
 [ -f "$SDK/platforms/android-35/android.jar" ] || { echo "нет $SDK/platforms/android-35/android.jar"; exit 1; }
 
 if [ -z "$(ls -A .local/exporters 2>/dev/null || true)" ]; then
@@ -50,10 +49,10 @@ if [ -z "$(ls -A .local/exporters 2>/dev/null || true)" ]; then
 fi
 
 FEATURES=()
-[ "$MODS" = 1 ] && FEATURES=(--features mods)
+if [ "$MODS" = 1 ]; then FEATURES=(--features mods); fi
 
-echo "== cargo build ${FEATURES[*]:-}"
-cargo build --locked --profile "$PROFILE" --target aarch64-linux-android -p horizon-android "${FEATURES[@]}"
+echo "== cargo build${FEATURES[*]:+ ${FEATURES[*]}}"
+cargo build --locked --profile "$PROFILE" --target aarch64-linux-android -p horizon-android ${FEATURES[@]+"${FEATURES[@]}"}
 SO=target/aarch64-linux-android/$PROFILE/libhorizon.so
 
 rm -rf "$OUT/stage" "$OUT/res.zip" "$OUT/assets" && mkdir -p "$OUT/stage/lib/arm64-v8a"
@@ -139,7 +138,10 @@ PATH="$JAVA_HOME/bin:$PATH" "$BUILD_TOOLS/apksigner" verify --print-certs "$OUT/
 rm -f "$OUT/base.apk" "$OUT/aligned.apk" "$OUT/horizon.apk.idsig" "$OUT/res.zip"
 
 cp "$OUT/horizon.apk" "$CIOUT/horizon.apk"
-[ "$GENERATED" = 1 ] && cp android/keys/horizon.jks "$CIOUT/horizon.jks" && cp android/keys/pass "$CIOUT/pass.txt"
+if [ "$GENERATED" = 1 ]; then
+  cp android/keys/horizon.jks "$CIOUT/horizon.jks"
+  cp android/keys/pass "$CIOUT/pass.txt"
+fi
 {
   echo "ref:      ${GITHUB_REF_NAME:-local} (${GITHUB_SHA:-?})"
   echo "profile:  $PROFILE"
