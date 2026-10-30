@@ -47,7 +47,7 @@ jobs:
             7fbee7186d230003cffd44b34eee9be368a59188
 
           echo "== вариант A: конфликты решаем в пользу пина (-X ours)"
-          if git cherry-pick -X ours d4aaf6c53a9280ae8d8b0cedff0865661c6bb39f 7fbee7186d230003cffd44b34eee9be368a59188 > /tmp/cp.log 2>&1; then
+          if git cherry-pick -n -X ours d4aaf6c53a9280ae8d8b0cedff0865661c6bb39f 7fbee7186d230003cffd44b34eee9be368a59188 > /tmp/cp.log 2>&1; then
             echo "  порт лёг"
           else
             echo "  порт НЕ лёг:"; tail -5 /tmp/cp.log | sed 's/^/    /'
@@ -67,7 +67,8 @@ jobs:
           # иначе из git rev-parse HEAD. Дерево = пин + коммиты MargyMC, поэтому пишем
           # фактический HEAD: цель пина — те же исходники, а корректность инъекций
           # проверяется самим apply (нет анкора -> ошибка) и компиляцией.
-          git -C src rev-parse HEAD | tee src/.horizon-revision
+          echo "${{ inputs.pin }}" | tee src/.horizon-revision
+          git -C src rev-parse HEAD
           echo "== пин мода ожидает: $(grep -h 'horizon' mods.incoming/mixins/*/horizon-mixin.toml 2>/dev/null | head -2)"
 
       - name: Собрать горизонт-миксины
