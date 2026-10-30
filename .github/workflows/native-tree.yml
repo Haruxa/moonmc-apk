@@ -84,6 +84,12 @@ jobs:
           MODS=mods.incoming
           ls -la | head -20; ls -la src | head -5
           test -d mods.incoming/mixins && MODS=mods.incoming/mixins
+          # В дереве MargyMC game.rs объявлен дважды: main.rs и android.rs (libhorizon.so).
+          # horizon-mixins требует единственного владельца файла -> на время apply
+          # убираем android.rs и возвращаем его в src-out после инъекций.
+          ANDROID=crates/horizon-client/src/android.rs
+          cp "src/$ANDROID" /tmp/android.rs.bak && rm "src/$ANDROID"
+          echo "== владельцы game.rs: $(grep -rln '^mod game;' --include=*.rs src/crates | tr '\n' ' ')"
           echo "== манифесты: $(find $MODS -name 'horizon-mixin.toml' | wc -l)"
           # horizon-mixins не умеет симлинки в дереве исходников (CLAUDE.md -> AGENTS.md),
           # а staged-inputs их отвергают: E_INVALID_PATH "symlinks are not supported"
@@ -92,6 +98,8 @@ jobs:
           echo "== осталось: $(find src -type l | wc -l)"
           ./mixins/target/release/horizon-mixins apply \
             --workspace src --mods "$MODS" --out src-out 2>&1
+          cp /tmp/android.rs.bak "src-out/$ANDROID"
+          echo "== android.rs возвращён: $(test -f src-out/$ANDROID && echo да)"
           echo "== изменилось файлов: $(cd src-out && find . -type f | wc -l)" || true
 
       - name: Проверить компиляцию с модом
