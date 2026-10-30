@@ -22,7 +22,7 @@
 import pathlib
 import sys
 
-SDK_MARK = "MargyMC-CI v2"
+SDK_MARK = "MargyMC-CI v3"
 
 EDITS = [
     (
@@ -78,6 +78,47 @@ EDITS = [
         .unwrap_or_else(|| home.join("tmp"));
 """,
     ),
+    (
+        pathlib.Path("crates/horizon-client/src/save.rs"),
+        """        file.try_lock()
+            .map_err(|_| format!("{} is already open in another instance", world.display()))?;
+""",
+        """        // MargyMC-CI v3: /sdcard is FUSE, which implements no file locks (flock gives
+        // ENOSYS). Only a real would-block is another instance; a filesystem without
+        // locks must not turn every world into "already open".
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err(format!(
+                    "{} is already open in another instance",
+                    world.display()
+                ))
+            }
+            Err(std::fs::TryLockError::Error(e)) => {
+                log::warn!("session lock unavailable for {}: {e}", world.display());
+            }
+        }
+""",
+    ),
+    (
+        pathlib.Path("crates/horizon-client/src/logging.rs"),
+        """    match lock.try_lock() {
+        Ok(()) => {}
+        Err(fs::TryLockError::WouldBlock) => return Ok(None),
+        Err(fs::TryLockError::Error(e)) => return Err(e),
+    }
+""",
+        """    match lock.try_lock() {
+        Ok(()) => {}
+        Err(fs::TryLockError::WouldBlock) => return Ok(None),
+        // MargyMC-CI v3: FUSE (/sdcard) has no flock, so take an unlocked log file
+        // rather than never writing latest.log at all.
+        Err(fs::TryLockError::Error(e)) => {
+            eprintln!("logging: file lock unavailable ({e}); writing latest.log unlocked");
+        }
+    }
+""",
+    ),
 ]
 
 
@@ -97,7 +138,10 @@ def main() -> int:
         print(f"{path}: пропатчен")
     if failed:
         return 1
-    print("MargyMC-CI v2: папка игры /sdcard/MargyMC/horizon, JRE и tmp — в приватном хранилище")
+    print(
+        "MargyMC-CI v3: папка игры /sdcard/MargyMC/horizon, JRE и tmp — в приватном хранилище,"
+        " файловые локи FUSE (flock) не считаются занятостью мира и не глушат latest.log"
+    )
     return 0
 
 
