@@ -94,8 +94,9 @@ jobs:
           # game.rs не импортирует тип EventLoop (есть только ActiveEventLoop)
           GAME=crates/horizon-client/src/game.rs
           ln=$(grep -n '^use ' "src/$GAME" | head -1 | cut -d: -f1)
-          sed -i "${ln}a use winit::event_loop::EventLoop;" "src/$GAME"
-          grep -c 'use winit::event_loop::EventLoop;' "src/$GAME"
+          # вставляем ПЕРЕД первым top-level use: он может быть многострочным
+          sed -i "${ln}i use winit::event_loop::EventLoop;" "src/$GAME"
+          sed -n "$((ln - 1)),$((ln + 1))p" "src/$GAME"
           echo "== владельцы game.rs: $(grep -rln '^mod game;' --include=*.rs src/crates | tr '\n' ' ')"
           echo "== манифесты: $(find $MODS -name 'horizon-mixin.toml' | wc -l)"
           # horizon-mixins не умеет симлинки в дереве исходников (CLAUDE.md -> AGENTS.md),
