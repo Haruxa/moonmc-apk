@@ -107,4 +107,6 @@ jobs:
         run: |
           cd src-out
           rustup target add aarch64-linux-android > /dev/null
-          cargo check --quiet -p horizon-client --features mods --target aarch64-linux-android 2>&1 | tail -40
+          set -o pipefail
+          cargo check -p horizon-client --features mods --target aarch64-linux-android 2>&1 | tail -40
+          echo "OK: компиляция с вшитым модом прошла"
