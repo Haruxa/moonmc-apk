@@ -107,6 +107,13 @@ jobs:
         run: |
           cd src-out
           rustup target add aarch64-linux-android > /dev/null
+          NDK=${ANDROID_NDK_LATEST_HOME:-$(ls -d "$ANDROID_SDK_ROOT"/ndk/* 2>/dev/null | sort -V | tail -1)}
+          NDK_BIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
+          export CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android29-clang"
+          export CXX_aarch64_linux_android="$NDK_BIN/aarch64-linux-android29-clang++"
+          export AR_aarch64_linux_android="$NDK_BIN/llvm-ar"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CC_aarch64_linux_android"
+          echo "NDK_BIN=$NDK_BIN"
           set -o pipefail
           cargo check -p horizon-client --features mods --target aarch64-linux-android 2>&1 | tail -40
           echo "OK: компиляция с вшитым модом прошла"
