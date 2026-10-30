@@ -41,9 +41,10 @@ EDITS = [
         .or_else(|| app.external_data_path())
         .unwrap_or_else(|| std::path::PathBuf::from("/data/local/tmp/horizon"));
     let _ = std::fs::create_dir_all(&private);
-    // SAFETY: no other thread reads the environment yet (see HORIZON_HOME below).
-    // The JRE and Java's temp files stay here: /sdcard is FUSE, which has no symlinks,
-    // and OpenJDK's legal/ folder is made of them.
+    // SAFETY: no thread reads the environment yet: the game's own environment is set
+    // up later, in android_setup. The JRE and Java's temp files stay in this private
+    // folder because /sdcard is FUSE, which has no symlinks, and OpenJDK's legal/
+    // folder is made of them.
     unsafe { std::env::set_var("HORIZON_PRIVATE_HOME", private.as_os_str()) };
     let external = std::path::PathBuf::from("/sdcard/MargyMC/horizon");
     let external_usable = std::fs::create_dir_all(&external).is_ok() && {
