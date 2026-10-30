@@ -1,0 +1,82 @@
+# Диагностика дерева для сборки с нативным модом (.hnmod).
+# Не собирает APK: склеивает дерево, накладывает порт, применяет миксины и
+# проверяет, что код с модом компилируется.
+name: native-tree
+
+on:
+  workflow_dispatch:
+    inputs:
+      pin:
+        description: "Коммит Horizon, на который пиннут мод"
+        required: true
+        default: "6f8c7a0e5d531d3834c4d0be4659a1db8e7e5c2a"
+      mixins_rev:
+        description: "Коммит horizon-mixins"
+        required: true
+        default: "0d6b103c70633d8fd9443d8d0acd3aadaacedb06"
+      mod_url:
+        description: "Ссылка на .hnmod"
+        required: true
+        default: "https://github.com/horizon-rust/horizon-mods/releases/download/fps_overlay-2.0.0/fps_overlay-2.0.0.hnmod"
+
+jobs:
+  tree:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Скачать мод
+        run: |
+          mkdir -p mods.incoming
+          curl -sSL -o /tmp/mod.hnmod "${{ inputs.mod_url }}"
+          ls -l /tmp/mod.hnmod
+          unzip -o -q /tmp/mod.hnmod -d mods.incoming/ || cp /tmp/mod.hnmod mods.incoming/
+          find mods.incoming -maxdepth 1 -type d | sed 's/^/  папка: /'
+          ls -la mods.incoming/* | head -10
+
+      - name: Дерево: пин + Android-порт
+        id: tree
+        run: |
+          git clone --quiet https://github.com/horizon-rust/horizon src
+          cd src
+          git config user.email ci@example.com && git config user.name ci
+          git checkout -q -B build "${{ inputs.pin }}"
+          git fetch --quiet https://git.narez.xyz/narezany/MargyMC \
+            d4aaf6c53a9280ae8d8b0cedff0865661c6bb39f \
+            7fbee7186d230003cffd44b34eee9be368a59188
+
+          echo "== вариант A: конфликты решаем в пользу пина (-X ours)"
+          if git cherry-pick -X ours d4aaf6c53a9280ae8d8b0cedff0865661c6bb39f 7fbee7186d230003cffd44b34eee9be368a59188 > /tmp/cp.log 2>&1; then
+            echo "  порт лёг"
+          else
+            echo "  порт НЕ лёг:"; tail -5 /tmp/cp.log | sed 's/^/    /'
+            git cherry-pick --abort > /dev/null 2>&1 || true
+            exit 1
+          fi
+          echo "== проверки дерева:"
+          echo "  маркеры конфликтов в game.rs: $(grep -c '^<<<<<<<' crates/horizon-client/src/game.rs || true)"
+          echo "  mod native_hooks в game.rs:   $(grep -c '^mod native_hooks;' crates/horizon-client/src/game.rs || true)"
+          echo "  файл game/native_hooks.rs:    $(test -f crates/horizon-client/src/game/native_hooks.rs && echo есть || echo НЕТ)"
+          echo "  вход android.rs:              $(test -f crates/horizon-client/src/android.rs && echo есть || echo НЕТ)"
+          echo "  crates/horizon-android:       $(test -d crates/horizon-android && echo есть || echo НЕТ)"
+
+      - name: Собрать горизонт-миксины
+        run: |
+          git clone --quiet https://github.com/horizon-rust/horizon-mixins mixins
+          cd mixins
+          git checkout -q "${{ inputs.mixins_rev }}"
+          cargo build --quiet --release
+          ls -l target/release/ | grep -i mixins
+
+      - name: Применить миксины
+        run: |
+          ./mixins/target/release/horizon-mixins apply \
+            --workspace src --mods mods.incoming --out src-out 2>&1 | tail -20
+          echo "== изменилось файлов: $(cd src-out && find . -type f | wc -l)"
+
+      - name: Проверить компиляцию с модом
+        run: |
+          cd src-out
+          rustup target add aarch64-linux-android > /dev/null
+          cargo check --quiet -p horizon-client --features mods --target aarch64-linux-android 2>&1 | tail -40
