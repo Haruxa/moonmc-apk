@@ -92,7 +92,8 @@ EDITS = [
                 return Err(format!(
                     "{} is already open in another instance",
                     world.display()
-                ))
+                )
+                .into())
             }
             Err(std::fs::TryLockError::Error(e)) => {
                 log::warn!("session lock unavailable for {}: {e}", world.display());
