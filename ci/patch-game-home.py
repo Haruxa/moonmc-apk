@@ -83,17 +83,20 @@ EDITS = [
         """        file.try_lock()
             .map_err(|_| format!("{} is already open in another instance", world.display()))?;
 """,
-        """        // MargyMC-CI v3: /sdcard is FUSE, which implements no file locks (flock gives
+        """        // MargyMC-CI v4: /sdcard is FUSE, which implements no file locks (flock gives
         // ENOSYS). Only a real would-block is another instance; a filesystem without
         // locks must not turn every world into "already open".
         match file.try_lock() {
             Ok(()) => {}
             Err(std::fs::TryLockError::WouldBlock) => {
-                return Err(format!(
-                    "{} is already open in another instance",
+                // MargyMC-CI v4: FUSE reports would-block for worlds that no other
+                // instance holds (stale/unreliable locks). Hard-failing here cost us
+                // real crashes, so warn and keep going; the Android app is
+                // single-activity, so a genuine second writer is not a real scenario.
+                log::warn!(
+                    "session lock for {} is held or unreliable; opening anyway",
                     world.display()
-                )
-                .into())
+                );
             }
             Err(std::fs::TryLockError::Error(e)) => {
                 log::warn!("session lock unavailable for {}: {e}", world.display());
