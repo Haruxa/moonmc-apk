@@ -30,6 +30,10 @@ on:
         description: "Имя zip-ассета с Minecraft в Release (пусто = первый *.zip)"
         required: false
         default: ""
+      home_on_sdcard:
+        description: "Папка игры в /sdcard/MargyMC/horizon (моды и миры видны файловому менеджеру)"
+        type: boolean
+        default: true
 
 defaults:
   run:
@@ -165,14 +169,23 @@ jobs:
           curl -fsSL --retry 3 -o s.tgz "${{ inputs.source_url }}/archive/${{ inputs.source_ref }}.tar.gz"
           tar xzf s.tgz --strip-components=1 && rm -f s.tgz
 
-      - name: Скрипт сборки из нашего репозитория
+      - name: Скрипты и патчи из нашего репозитория
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p src/ci
-          gh api "repos/${{ github.repository }}/contents/ci/build-apk-modded.sh?ref=${{ github.sha }}" \
-            -H "Accept: application/vnd.github.raw" > src/ci/build-apk-modded.sh
-          head -2 src/ci/build-apk-modded.sh; wc -l src/ci/build-apk-modded.sh
+          fetch() {
+            gh api "repos/${{ github.repository }}/contents/ci/$1?ref=${{ github.sha }}" \
+              -H "Accept: application/vnd.github.raw" > "src/ci/$1"
+            printf '   %s: %s строк\n' "$1" "$(wc -l < "src/ci/$1")"
+          }
+          fetch build-apk-modded.sh
+          fetch patch-game-home.py
+
+      - name: Патч: папка игры на /sdcard
+        if: inputs.home_on_sdcard
+        working-directory: src
+        run: python3 ci/patch-game-home.py
 
       - name: Rust + цель aarch64-linux-android
         run: |
@@ -209,6 +222,8 @@ jobs:
         env:
           PROFILE: ${{ inputs.profile }}
           MODS: ${{ inputs.mods && '1' || '0' }}
+          CI_KEYSTORE_B64: ${{ secrets.CI_KEYSTORE_B64 }}
+          CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
         run: |
           . "$HOME/.cargo/env"
           bash ci/build-apk-modded.sh 2>&1 | tail -150
