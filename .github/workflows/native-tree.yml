@@ -110,7 +110,9 @@ jobs:
           # ВАЖНО: horizon-mixins генерирует EventLoop::new(), а на Android так нельзя
           # (panic "An AndroidApp as passed to android_main() is required...").
           # Движок в том же файле использует horizon_client::event_loop::new() — берём его.
-          sed -i 's/EventLoop::new()/horizon_client::event_loop::new()/g' "src-out/$GAME"
+          sed -i -e 's/winit::event_loop::EventLoop::new()/horizon_client::event_loop::new()/g' \
+                 -e 's/EventLoop::new()/horizon_client::event_loop::new()/g' "src-out/$GAME"
+          grep -n 'event_loop::new()' "src-out/$GAME" | head -3
           LEFT=$(grep -c 'EventLoop::new()' "src-out/$GAME" || true)
           FIXED=$(grep -c 'horizon_client::event_loop::new()' "src-out/$GAME" || true)
           echo "== EventLoop::new() осталось: $LEFT, через хелпер: $FIXED"
