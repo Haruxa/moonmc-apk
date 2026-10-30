@@ -72,11 +72,12 @@ jobs:
       - name: Применить миксины
         run: |
           MODS=mods.incoming
+          ls -la | head -20; ls -la src | head -5
           test -d mods.incoming/mixins && MODS=mods.incoming/mixins
           echo "== манифесты: $(find $MODS -name 'horizon-mixin.toml' | wc -l)"
           ./mixins/target/release/horizon-mixins apply \
-            --workspace src --mods "$MODS" --out src-out 2>&1 | tail -20
-          echo "== изменилось файлов: $(cd src-out && find . -type f | wc -l)"
+            --workspace src --mods "$MODS" --out src-out 2>&1
+          echo "== изменилось файлов: $(cd src-out && find . -type f | wc -l)" || true
 
       - name: Проверить компиляцию с модом
         run: |
