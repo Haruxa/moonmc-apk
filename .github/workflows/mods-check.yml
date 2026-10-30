@@ -1,0 +1,124 @@
+# Шаг 1: проверить, что фича `mods` (wasmtime/cranelift) вообще собирается под aarch64-linux-android.
+# Файлы игры не нужны, APK пока не собирается, секретов не нужно.
+name: mods-check
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: "База архива исходников MargyMC"
+        required: true
+        default: "https://git.narez.xyz/narezany/MargyMC"
+      source_ref:
+        description: "Ветка/тег/коммит MargyMC"
+        required: true
+        default: "main"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - name: Окружение раннера
+        run: |
+          echo "cpu=$(nproc)"; free -h; df -h /
+          echo "ANDROID_HOME=${ANDROID_HOME:-}"; echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-}"
+          echo "NDK_LATEST=${ANDROID_NDK_LATEST_HOME:-}"; echo "NDK_HOME=${ANDROID_NDK_HOME:-}"
+          ls "${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools" 2>/dev/null || true
+          java -version 2>&1 | head -3
+
+      - name: Освободить место на диске
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/az \
+                      "$AGENT_TOOLSDIRECTORY" /usr/local/lib/android/sdk/system-images || true
+          df -h /
+
+      - name: Скачать исходники MargyMC
+        run: |
+          mkdir -p src && cd src
+          curl -fsSL --retry 3 -o source.tar.gz "${{ inputs.source_url }}/archive/${{ inputs.source_ref }}.tar.gz"
+          tar xzf source.tar.gz --strip-components=1
+          rm -f source.tar.gz
+          echo "--- корень:"; ls
+          test -f Cargo.lock && echo "Cargo.lock на месте" || { echo "::error::нет Cargo.lock"; exit 1; }
+
+      - name: Rust + цель aarch64-linux-android
+        working-directory: src
+        run: |
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+          . "$HOME/.cargo/env"
+          rustc -vV | tee /tmp/rustc.txt
+          cargo --version
+          rustup target add aarch64-linux-android
+
+      - name: Кэш target и registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            src/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: check-${{ inputs.source_ref }}-${{ hashFiles('src/Cargo.lock') }}
+          restore-keys: |
+            check-${{ inputs.source_ref }}-
+
+      - name: cargo check -p horizon-android --features mods (aarch64-linux-android)
+        id: android
+        continue-on-error: true
+        working-directory: src
+        run: |
+          set -o pipefail
+          . "$HOME/.cargo/env"
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          NDK="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-$(ls -d "$SDK"/ndk/* 2>/dev/null | sort -V | tail -1)}}"
+          echo "NDK=$NDK" | tee /tmp/env.txt
+          NDK_BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export ANDROID_NDK_HOME="$NDK" ANDROID_NDK_ROOT="$NDK" SDKROOT="$NDK"
+          export CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android29-clang"
+          export CXX_aarch64_linux_android="$NDK_BIN/aarch64-linux-android29-clang++"
+          export AR_aarch64_linux_android="$NDK_BIN/llvm-ar"
+          export RANLIB_aarch64_linux_android="$NDK_BIN/llvm-ranlib"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CC_aarch64_linux_android"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$AR_aarch64_linux_android"
+          cargo check --locked --target aarch64-linux-android -p horizon-android --features mods \
+            2>&1 | tee /tmp/check.log
+
+      - name: Вердикт
+        working-directory: src
+        run: |
+          {
+            echo "## mods-check: ${{ inputs.source_ref }}"
+            echo ""
+            echo '```'
+            cat /tmp/rustc.txt || true
+            grep -E '^(NDK=|NDK_BIN)' /tmp/env.txt || true
+            echo '```'
+            if [ "${{ steps.android.outcome }}" = "success" ]; then
+              echo "**Итог: фича \`mods\` компилируется под aarch64-linux-android.** Это ещё не значит, что wasmtime взлетит в рантайме на телефоне, но главный риск (несовместимость cranelift с Android) снят."
+            else
+              echo "**Итог: сборка с \`mods\` под Android падает.** Ниже первые ошибки:"
+              echo '```'
+              grep -nE '^error(\[E[0-9]+\])?' -A 12 /tmp/check.log | head -120 || tail -60 /tmp/check.log
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "---"; tail -40 /tmp/check.log || true
+
+      - name: Выгрузить логи
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mods-check-logs
+          path: |
+            /tmp/check.log
+            /tmp/rustc.txt
+            /tmp/env.txt
+          if-no-files-found: warn
+
+      - name: Провалить job, если check не прошёл
+        if: steps.android.outcome != 'success'
+        run: exit 1
