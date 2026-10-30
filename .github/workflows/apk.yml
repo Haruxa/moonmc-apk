@@ -286,6 +286,12 @@ jobs:
           # horizon-android подменяем заглушкой, настоящий файл вернём после
           cp "src/$ANDROID" /tmp/android.rs.bak
           printf 'fn stub() {}\n' > "src/$ANDROID"
+          # horizon-mixins генерирует EventLoop::new()?.run_app(...), а в этом пине
+          # game.rs не импортирует тип EventLoop (есть только ActiveEventLoop)
+          GAME=crates/horizon-client/src/game.rs
+          ln=$(grep -n '^use ' "src/$GAME" | head -1 | cut -d: -f1)
+          sed -i "${ln}a use winit::event_loop::EventLoop;" "src/$GAME"
+          grep -c 'use winit::event_loop::EventLoop;' "src/$GAME"
           ./mixins/target/release/horizon-mixins apply \
             --workspace src --mods mods.incoming/mixins --out src-out
           cp /tmp/android.rs.bak "src-out/$ANDROID"
