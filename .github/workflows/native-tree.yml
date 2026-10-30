@@ -71,8 +71,11 @@ jobs:
 
       - name: Применить миксины
         run: |
+          MODS=mods.incoming
+          test -d mods.incoming/mixins && MODS=mods.incoming/mixins
+          echo "== манифесты: $(find $MODS -name 'horizon-mixin.toml' | wc -l)"
           ./mixins/target/release/horizon-mixins apply \
-            --workspace src --mods mods.incoming --out src-out 2>&1 | tail -20
+            --workspace src --mods "$MODS" --out src-out 2>&1 | tail -20
           echo "== изменилось файлов: $(cd src-out && find . -type f | wc -l)"
 
       - name: Проверить компиляцию с модом
