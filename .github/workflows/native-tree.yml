@@ -75,6 +75,11 @@ jobs:
           ls -la | head -20; ls -la src | head -5
           test -d mods.incoming/mixins && MODS=mods.incoming/mixins
           echo "== манифесты: $(find $MODS -name 'horizon-mixin.toml' | wc -l)"
+          # horizon-mixins не умеет симлинки в дереве исходников (CLAUDE.md -> AGENTS.md),
+          # а staged-inputs их отвергают: E_INVALID_PATH "symlinks are not supported"
+          echo "== симлинки в дереве: $(find src -type l | wc -l)"
+          find src -type l -not -path 'src/.git/*' -not -path 'src/target/*' -print -delete || true
+          echo "== осталось: $(find src -type l | wc -l)"
           ./mixins/target/release/horizon-mixins apply \
             --workspace src --mods "$MODS" --out src-out 2>&1
           echo "== изменилось файлов: $(cd src-out && find . -type f | wc -l)" || true
