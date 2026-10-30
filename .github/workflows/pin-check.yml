@@ -1,0 +1,54 @@
+# Ворота для .hnmod: накатывается ли Android-порт MargyMC на коммиты,
+# на которые пиннуты нативные моды. Только git, без сборки.
+name: pin-check
+
+on:
+  workflow_dispatch:
+    inputs:
+      pins:
+        description: "Коммиты-пины через пробел"
+        required: true
+        default: "6f8c7a0e5d531d3834c4d0be4659a1db8e7e5c2a 142388e1c136e622652ec7505af15d8ad195e041"
+
+jobs:
+  pins:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Полная история форка
+        run: |
+          git clone --quiet https://git.narez.xyz/narezany/MargyMC src
+          cd src
+          git config user.email ci@example.com
+          git config user.name ci
+          echo "== верхушка:"; git log --oneline -3
+          echo "== коммиты MargyMC:"; git log --format='%h %s' --grep='MargyMC' | head -5
+
+      - name: Наложение Android-порта на каждый пин
+        run: |
+          cd src
+          A=$(git log --format=%H --grep='MargyMC: Horizon on Android phones' -n1)
+          B=$(git log --format=%H --grep='MargyMC 0.1.1' -n1)
+          echo "Android-коммиты: A=$A B=$B"
+          for pin in ${{ inputs.pins }}; do
+            echo "================= пин $pin"
+            if ! git rev-parse --verify --quiet "$pin^{commit}" > /dev/null; then
+              echo "  ОТСУТСТВУЕТ в этом репозитории"; continue
+            fi
+            git checkout -q -B "try-$pin" "$pin"
+            ok=1
+            for c in $A $B; do
+              if git cherry-pick -x "$c" > /tmp/cp.log 2>&1; then
+                echo "  $(git log -1 --format='%h %s' $c): чисто"
+              else
+                ok=0
+                echo "  $(git log -1 --format='%h %s' $c): КОНФЛИКТ"
+                git diff --name-only --diff-filter=U | sed 's/^/      /'
+                tail -3 /tmp/cp.log | sed 's/^/      log: /'
+                git cherry-pick --abort > /dev/null 2>&1
+                break
+              fi
+            done
+            [ $ok = 1 ] && echo "  ИТОГ: пин $pin + Android-порт собираемы"
+            git checkout -q main
+          done
