@@ -293,6 +293,9 @@ jobs:
           # вставляем ПЕРЕД первым top-level use: он может быть многострочным
           sed -i "${ln}i use winit::event_loop::EventLoop;" "src/$GAME"
           sed -n "$((ln - 1)),$((ln + 1))p" "src/$GAME"
+          ./mixins/target/release/horizon-mixins apply \
+            --workspace src --mods mods.incoming/mixins --out src-out
+          cp /tmp/android.rs.bak "src-out/$ANDROID"
           # ВАЖНО: horizon-mixins генерирует EventLoop::new(), а на Android так нельзя
           # (panic "An AndroidApp as passed to android_main() is required...").
           # Движок в том же файле использует horizon_client::event_loop::new() — берём его.
@@ -301,9 +304,6 @@ jobs:
           FIXED=$(grep -c 'horizon_client::event_loop::new()' "src-out/$GAME" || true)
           echo "== EventLoop::new() осталось: $LEFT, через хелпер: $FIXED"
           test "$LEFT" = "0"
-          ./mixins/target/release/horizon-mixins apply \
-            --workspace src --mods mods.incoming/mixins --out src-out
-          cp /tmp/android.rs.bak "src-out/$ANDROID"
           cp -a src/.local src-out/.local
           echo "== вшитые файлы: $(ls src-out/crates/horizon-client/src/game/ | grep -c official || true)"
           rm -rf src && mv src-out src
