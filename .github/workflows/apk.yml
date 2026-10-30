@@ -1,0 +1,145 @@
+# Этап 2: полный APK с фичей `mods`.
+# Нужен архив с твоей папкой .minecraft (26.3) в Release этого же приватного репозитория:
+#   .minecraft/versions/26.3/26.3.jar, libraries/, assets/, и server.jar от 26.3
+# Ничего от Mojang не публикуется: приватный репо, приватный Release, артефакт только для тебя.
+name: apk
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: "База архива исходников MargyMC"
+        required: true
+        default: "https://git.narez.xyz/narezany/MargyMC"
+      source_ref:
+        description: "Ветка/тег/коммит MargyMC"
+        required: true
+        default: "main"
+      profile:
+        description: "Профиль cargo"
+        type: choice
+        options: [fast, release]
+        default: fast
+      mods:
+        description: "Собирать с код-модами (--features mods)"
+        type: boolean
+        default: true
+      mc_asset:
+        description: "Имя zip-ассета с .minecraft в Release (пусто = первый *.zip)"
+        required: false
+        default: ""
+      skip_prepare:
+        description: "В ассете уже готовый .local/exporters — prepare не запускать"
+        type: boolean
+        default: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - name: Окружение раннера
+        run: |
+          echo "cpu=$(nproc)"; free -h; df -h /
+          echo "NDK_LATEST=${ANDROID_NDK_LATEST_HOME:-}"; echo "SDK=${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          ls "${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools" 2>/dev/null || true
+          java -version 2>&1 | head -3
+
+      - name: Освободить место на диске
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/az \
+                      "$AGENT_TOOLSDIRECTORY" /usr/local/lib/android/sdk/system-images || true
+          df -h /
+
+      - name: Скачать исходники MargyMC
+        run: |
+          mkdir -p src && cd src
+          curl -fsSL --retry 3 -o source.tar.gz "${{ inputs.source_url }}/archive/${{ inputs.source_ref }}.tar.gz"
+          tar xzf source.tar.gz --strip-components=1
+          rm -f source.tar.gz
+          ls | head -30
+
+      - name: Rust + цель aarch64-linux-android
+        working-directory: src
+        run: |
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+          . "$HOME/.cargo/env"
+          rustc -vV
+          rustup target add aarch64-linux-android
+
+      - name: Кэш target и registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            src/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: apk-${{ inputs.profile }}-${{ inputs.mods }}-${{ inputs.source_ref }}-${{ hashFiles('src/Cargo.lock') }}
+          restore-keys: |
+            check-${{ inputs.source_ref }}-
+
+      - name: JDK 25 для horizon-prepare
+        if: ${{ !inputs.skip_prepare }}
+        run: |
+          curl -fsSL -o /tmp/jdk25.tgz "https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jdk/hotspot/normal/eclipse"
+          mkdir -p "$RUNNER_TEMP/jdk25" && tar xzf /tmp/jdk25.tgz -C "$RUNNER_TEMP/jdk25" --strip-components=1
+          "$RUNNER_TEMP/jdk25/bin/java" -version 2>&1 | head -2
+          echo "JDK25=$RUNNER_TEMP/jdk25" >> "$GITHUB_ENV"
+
+      - name: Файлы Minecraft из Release
+        working-directory: src
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/mc-raw
+          if [ -n "${{ inputs.mc_asset }}" ]; then
+            gh release download --pattern "${{ inputs.mc_asset }}" --dir /tmp/mc-raw --clobber
+          else
+            gh release download --pattern '*.zip' --dir /tmp/mc-raw --clobber
+          fi
+          ls -la /tmp/mc-raw
+          mkdir -p "$RUNNER_TEMP/mc"
+          for z in /tmp/mc-raw/*.zip; do unzip -oq "$z" -d "$RUNNER_TEMP/mc"; done
+          if [ -d "$RUNNER_TEMP/mc/.minecraft" ]; then mv "$RUNNER_TEMP/mc/.minecraft" "$RUNNER_TEMP/mc/mc"; fi
+          ls "$RUNNER_TEMP/mc"
+          du -sh "$RUNNER_TEMP/mc"/* 2>/dev/null | head -10
+          echo "MC=$RUNNER_TEMP/mc" >> "$GITHUB_ENV"
+
+      - name: horizon-prepare --prepare
+        if: ${{ !inputs.skip_prepare }}
+        working-directory: src
+        run: |
+          set -o pipefail
+          . "$HOME/.cargo/env"
+          cargo build --locked --release -p horizon-prepare 2>&1 | tail -5
+          MC_DIR="$MC"; [ -d "$MC_DIR/minecraft" ] && MC_DIR="$MC_DIR/minecraft"
+          SRV=$(find "$MC" -maxdepth 3 -name 'server*.jar' | head -1 || true)
+          echo "minecraft-dir=$MC_DIR"; echo "server-jar=${SRV:-<нет>}"
+          test -f "$MC_DIR/versions/26.3/26.3.jar" || { echo "::error::в ассете нет versions/26.3/26.3.jar"; exit 1; }
+          ARGS=(--prepare --minecraft-dir "$MC_DIR" --root "$GITHUB_WORKSPACE")
+          [ -n "$SRV" ] && ARGS+=(--server-jar "$SRV")
+          JAVA_HOME="$JDK25" PATH="$JDK25/bin:$PATH" \
+            target/release/horizon-prepare "${ARGS[@]}" 2>&1 | tail -60
+          echo "== exporters:"; ls .local/exporters | head; ls .local | head
+          df -h /
+
+      - name: Сборка APK
+        working-directory: src
+        env:
+          PROFILE: ${{ inputs.profile }}
+          MODS: ${{ inputs.mods && '1' || '0' }}
+        run: |
+          . "$HOME/.cargo/env"
+          bash ci/build-apk-modded.sh 2>&1 | tail -120
+
+      - name: Артефакт
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: horizon-apk
+          path: src/ci-out/
+          if-no-files-found: warn
