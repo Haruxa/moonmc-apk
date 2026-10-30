@@ -34,6 +34,18 @@ on:
         description: "Папка игры в /sdcard/MargyMC/horizon (моды и миры видны файловому менеджеру)"
         type: boolean
         default: true
+      native_pin:
+        description: "Пин horizon-rust/horizon для нативных модов (пусто = обычная сборка MargyMC)"
+        required: false
+        default: ""
+      mixins_rev:
+        description: "Ревизия horizon-rust/horizon-mixins"
+        required: false
+        default: "0d6b103c70633d8fd9443d8d0acd3aadaacedb06"
+      mod_urls:
+        description: "Ссылки на .hnmod через пробел (только при native_pin)"
+        required: false
+        default: ""
 
 defaults:
   run:
@@ -60,6 +72,7 @@ jobs:
           mkdir -p src && cd src
           curl -fsSL --retry 3 -o s.tgz "${{ inputs.source_url }}/archive/${{ inputs.source_ref }}.tar.gz"
           tar xzf s.tgz --strip-components=1 && rm -f s.tgz
+
           ls research-lock.json
 
       - name: Rust
@@ -164,10 +177,25 @@ jobs:
           df -h /
 
       - name: Скачать исходники MargyMC
+        if: inputs.native_pin == ''
         run: |
           mkdir -p src && cd src
           curl -fsSL --retry 3 -o s.tgz "${{ inputs.source_url }}/archive/${{ inputs.source_ref }}.tar.gz"
           tar xzf s.tgz --strip-components=1 && rm -f s.tgz
+
+      - name: "Дерево: пин игры + Android-порт MargyMC"
+        if: inputs.native_pin != ''
+        run: |
+          git clone --quiet https://github.com/horizon-rust/horizon src
+          cd src
+          git config user.email ci@example.com && git config user.name ci
+          git checkout -q -B build "${{ inputs.native_pin }}"
+          git fetch --quiet https://git.narez.xyz/narezany/MargyMC \
+            d4aaf6c53a9280ae8d8b0cedff0865661c6bb39f \
+            7fbee7186d230003cffd44b34eee9be368a59188
+          git cherry-pick -n -X ours d4aaf6c53a9280ae8d8b0cedff0865661c6bb39f 7fbee7186d230003cffd44b34eee9be368a59188
+          echo "${{ inputs.native_pin }}" > .horizon-revision
+          echo "== дерево: HEAD=$(git rev-parse --short HEAD) файлов=$(git status --porcelain | wc -l)"
 
       - name: Скрипты и патчи из нашего репозитория
         env:
@@ -216,6 +244,48 @@ jobs:
           mkdir -p .local
           tar xzf "$RUNNER_TEMP/exporters.tgz" -C .local
           find .local -maxdepth 2 | head -20
+
+      - name: Собрать горизонт-миксины
+        if: inputs.native_pin != ''
+        run: |
+          git clone --quiet https://github.com/horizon-rust/horizon-mixins mixins
+          cd mixins
+          git checkout -q "${{ inputs.mixins_rev }}"
+          cargo build --quiet --release
+          ls -l target/release/ | grep -i mixins
+
+      - name: Скачать нативные моды
+        if: inputs.native_pin != ''
+        run: |
+          mkdir -p mods.incoming
+          i=0
+          for u in ${{ inputs.mod_urls }}; do
+            i=$((i+1))
+            curl -fsSL --retry 3 -o "/tmp/mod$i.hnmod" "$u"
+            mkdir -p "mods.incoming/mod$i"
+            unzip -o -q "/tmp/mod$i.hnmod" -d "mods.incoming/mod$i"
+            echo "  мод $i: $(find mods.incoming/mod$i -name 'horizon-mixin.toml' | wc -l) манифест(ов)"
+          done
+          test "$i" -gt 0
+
+      - name: Вшить моды в дерево
+        if: inputs.native_pin != ''
+        run: |
+          set -euo pipefail
+          . "$HOME/.cargo/env"
+          ANDROID=crates/horizon-client/src/android.rs
+          # horizon-mixins отвергает симлинки (CLAUDE.md -> AGENTS.md)
+          find src -type l -not -path 'src/.git/*' -not -path 'src/target/*' -delete || true
+          # и требует, чтобы у game.rs был единственный владелец: на время apply
+          # horizon-android подменяем заглушкой, настоящий файл вернём после
+          cp "src/$ANDROID" /tmp/android.rs.bak
+          printf 'fn stub() {}\n' > "src/$ANDROID"
+          ./mixins/target/release/horizon-mixins apply \
+            --workspace src --mods mods.incoming --out src-out
+          cp /tmp/android.rs.bak "src-out/$ANDROID"
+          cp -a src/.local src-out/.local
+          echo "== вшитые файлы: $(ls src-out/crates/horizon-client/src/game/ | grep -c official || true)"
+          rm -rf src && mv src-out src
 
       - name: Сборка APK
         working-directory: src
