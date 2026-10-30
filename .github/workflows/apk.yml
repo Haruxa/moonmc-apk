@@ -182,7 +182,7 @@ jobs:
           fetch build-apk-modded.sh
           fetch patch-game-home.py
 
-      - name: Патч: папка игры на /sdcard
+      - name: "Патч: папка игры на /sdcard"
         if: inputs.home_on_sdcard
         working-directory: src
         run: python3 ci/patch-game-home.py
