@@ -84,20 +84,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          REPO="${{ github.repository }}"
           mkdir -p /tmp/raw "$RUNNER_TEMP/mc"
           if [ -n "${{ inputs.mc_asset }}" ]; then
-            gh release download --pattern "${{ inputs.mc_asset }}" --dir /tmp/raw --clobber
+            gh release download --repo "$REPO" --pattern "${{ inputs.mc_asset }}" --dir /tmp/raw --clobber
           else
-            gh release download --pattern '*.zip' --dir /tmp/raw --clobber
+            gh release download --repo "$REPO" --pattern '*.zip' --dir /tmp/raw --clobber
           fi
           ls -l /tmp/raw
           for z in /tmp/raw/*.zip; do unzip -oq "$z" -d "$RUNNER_TEMP/mc"; done
           rm -rf /tmp/raw
-          [ -d "$RUNNER_TEMP/mc/.minecraft" ] && mv "$RUNNER_TEMP/mc/.minecraft" "$RUNNER_TEMP/mc/mc"
           MC="$RUNNER_TEMP/mc"
-          [ -d "$MC/minecraft" ] && MC="$MC/minecraft"
+          if [ -d "$MC/.minecraft" ]; then MC="$MC/.minecraft"; fi
+          if [ -d "$MC/minecraft" ]; then MC="$MC/minecraft"; fi
           echo "MC=$MC" >> "$GITHUB_ENV"
-          echo "== содержимое:"; ls "$MC"; du -sh "$MC"/* | head
+          echo "== содержимое $MC:"; ls "$MC"; du -sh "$MC"/* | head
           test -f "$MC/versions/26.3/26.3.jar" || { echo "::error::нет $MC/versions/26.3/26.3.jar"; exit 1; }
           df -h /
 
@@ -109,8 +110,8 @@ jobs:
           cargo build --locked --release -p horizon-prepare 2>&1 | tail -3
           SRV=$(find "$MC" -maxdepth 3 -name 'server*.jar' | head -1 || true)
           echo "mc=$MC  server=${SRV:-<нет>}"
-          ARGS=(--prepare --minecraft-dir "$MC" --root "$GITHUB_WORKSPACE")
-          [ -n "$SRV" ] && ARGS+=(--server-jar "$SRV")
+          ARGS=(--prepare --minecraft-dir "$MC" --root "$GITHUB_WORKSPACE/src")
+          if [ -n "$SRV" ]; then ARGS+=(--server-jar "$SRV"); fi
           JAVA_HOME="$JDK25" PATH="$JDK25/bin:$PATH" \
             target/release/horizon-prepare "${ARGS[@]}" 2>&1 | tail -80
           echo "== exporters:"; find .local/exporters -maxdepth 2 | head -20
