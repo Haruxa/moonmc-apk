@@ -122,6 +122,26 @@ EDITS = [
     }
 """,
     ),
+    # В новых пинах логирование переехало в horizon-client-render: тот же блок.
+    (
+        pathlib.Path("crates/horizon-client-render/src/logging.rs"),
+        """    match lock.try_lock() {
+        Ok(()) => {}
+        Err(fs::TryLockError::WouldBlock) => return Ok(None),
+        Err(fs::TryLockError::Error(e)) => return Err(e),
+    }
+""",
+        """    match lock.try_lock() {
+        Ok(()) => {}
+        Err(fs::TryLockError::WouldBlock) => return Ok(None),
+        // MoonMC-CI v3: FUSE (/sdcard) has no flock, so take an unlocked log file
+        // rather than never writing latest.log at all.
+        Err(fs::TryLockError::Error(e)) => {
+            eprintln!("logging: file lock unavailable ({e}); writing latest.log unlocked");
+        }
+    }
+""",
+    ),
 ]
 
 
@@ -137,6 +157,10 @@ REBRAND = [
 def main() -> int:
     failed = False
     for path, original, patched in EDITS:
+        if not path.is_file():
+            # файл мог переехать в новом пине: это не повод падать
+            print(f"::warning::{path}: файла нет в этом пине, пропускаю патч")
+            continue
         text = path.read_text()
         # заменённый текст сам служит маркером: так пропуск работает и после смены версии
         if patched in text:
