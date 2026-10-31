@@ -306,6 +306,9 @@ jobs:
           FIXED=$(grep -c 'horizon_client::event_loop::new()' "src-out/$GAME" || true)
           echo "== EventLoop::new() осталось: $LEFT, через хелпер: $FIXED"
           test "$LEFT" = "0"
+          # Профили экранного управления: раскладка кнопок из JSON (touch/profiles/*.json).
+          ( cd src-out && python3 ../ci/patch-touch.py ../ci/touch_layout.rs )
+          grep -n 'mod touch_layout' "src-out/$GAME" | head -2
           cp -a src/.local src-out/.local
           echo "== вшитые файлы: $(ls src-out/crates/horizon-client/src/game/ | grep -c official || true)"
           rm -rf src && mv src-out src
