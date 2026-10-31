@@ -359,7 +359,7 @@ jobs:
           ls -l target/release/ | grep -i mixins
 
       - name: Скачать нативные моды
-        if: inputs.native_pin != '' && inputs.native_mods != 'none'
+        if: inputs.native_pin != '' && (inputs.native_mods != 'none' || inputs.mod_urls != '')
         run: |
           mkdir -p mods.incoming
           i=0
@@ -400,7 +400,7 @@ jobs:
           test "$i" -gt 0 || { echo "::error::не выбрано ни одного мода"; exit 1; }
 
       - name: Вшить моды в дерево
-        if: inputs.native_pin != '' && inputs.native_mods != 'none'
+        if: inputs.native_pin != '' && (inputs.native_mods != 'none' || inputs.mod_urls != '')
         run: |
           set -euo pipefail
           . "$HOME/.cargo/env"
