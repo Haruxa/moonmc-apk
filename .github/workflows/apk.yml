@@ -275,12 +275,23 @@ jobs:
         run: |
           mkdir -p mods.incoming
           i=0
+          # Без ссылок берём бандлы из своего дерева (ci/bundles/*.hnmod) — приватный
+          # репозиторий нельзя скачать обычным curl.
+          if [ -z "${{ inputs.mod_urls }}" ]; then
+            for f in ci/bundles/*.hnmod; do
+              [ -e "$f" ] || continue
+              i=$((i+1))
+              mkdir -p "mods.incoming/mod$i"
+              unzip -o -q "$f" -d "mods.incoming/mod$i"
+              echo "  мод $i (бандл): $f, $(find "mods.incoming/mod$i" -name 'horizon-mixin.toml' | wc -l) манифест(ов)"
+            done
+          fi
           for u in ${{ inputs.mod_urls }}; do
             i=$((i+1))
             curl -fsSL --retry 3 -o "/tmp/mod$i.hnmod" "$u"
             mkdir -p "mods.incoming/mod$i"
             unzip -o -q "/tmp/mod$i.hnmod" -d "mods.incoming/mod$i"
-            echo "  мод $i: $(find mods.incoming/mod$i -name 'horizon-mixin.toml' | wc -l) манифест(ов)"
+            echo "  мод $i: $(find "mods.incoming/mod$i" -name 'horizon-mixin.toml' | wc -l) манифест(ов)"
           done
           # horizon-mixins не рекурсирует по каталогам: раскладываем все моды в одну папку
           mkdir -p mods.incoming/mixins
