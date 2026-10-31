@@ -31,7 +31,7 @@ on:
         required: false
         default: ""
       home_on_sdcard:
-        description: "Папка игры в /sdcard/MargyMC/horizon (моды и миры видны файловому менеджеру)"
+        description: "Папка игры в /sdcard/MoonMC/horizon (моды и миры видны файловому менеджеру)"
         type: boolean
         default: true
       native_pin:
@@ -210,12 +210,26 @@ jobs:
           fetch build-apk-modded.sh
           fetch patch-game-home.py
           fetch patch-touch.py
+          fetch patch-branding.py
           fetch touch_layout.rs
+          # иконки и adaptive-xml для брендинга MoonMC
+          mkdir -p src/ci/branding
+          gh api "repos/${{ github.repository }}/contents/ci/branding?ref=${{ github.sha }}" \
+            --jq '.[] | .path' | while read -r p; do
+            mkdir -p "src/$(dirname "$p")"
+            gh api "repos/${{ github.repository }}/contents/$p?ref=${{ github.sha }}" \
+              -H "Accept: application/vnd.github.raw" > "src/$p"
+          done
+          echo "   branding: $(find src/ci/branding -type f | wc -l) файлов"
 
       - name: "Патч: папка игры на /sdcard"
         if: inputs.home_on_sdcard
         working-directory: src
         run: python3 ci/patch-game-home.py
+
+      - name: "Патч: имя и иконка MoonMC (Material You)"
+        working-directory: src
+        run: python3 ci/patch-branding.py
 
       - name: Rust + цель aarch64-linux-android
         run: |
