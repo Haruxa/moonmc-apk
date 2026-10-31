@@ -1,0 +1,171 @@
+# Матрица совместимости нативных модов: какой .hnmod живёт на каком пине движка.
+#
+# Для каждого мода: источник движка на пине → horizon-mixins apply → cargo check
+# horizon-client. Результат: ci/compat/<pin7>.json (читает лаунчер) + таблица в summary.
+name: native-compat
+
+on:
+  workflow_dispatch:
+    inputs:
+      pin:
+        description: "Коммит horizon (пин движка)"
+        required: true
+      mixins_rev:
+        description: "Ревизия horizon-mixins"
+        required: true
+      mods:
+        description: "Ссылки на .hnmod или имена бандлов через пробел (пусто = все нативные из каталога)"
+        required: false
+        default: ""
+      limit:
+        description: "Сколько модов проверить (0 = все)"
+        required: false
+        default: "0"
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  compat:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      PIN: ${{ inputs.pin }}
+      MIXINS: ${{ inputs.mixins_rev }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust
+        run: |
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+          . "$HOME/.cargo/env"; rustc -vV | head -2
+
+      - name: Кэш крейтов и target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target-check
+          key: compat-${{ inputs.pin }}-${{ inputs.mixins_rev }}
+
+      # Подпись движка: пин -> Nightly (вечные теги nightly-source/<дата>-<sha>)
+      - name: "Движок: подпись Nightly"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHORT=$(printf '%s' "${{ inputs.pin }}" | cut -c1-7)
+          TAG=$(gh api "repos/horizon-rust/horizon/git/matching-refs/tags/nightly-source" \
+                  --jq "[.[].ref | sub(\"refs/tags/nightly-source/\"; \"\")] | map(select(endswith(\"-$SHORT\"))) | .[0] // \"\"" || true)
+          if [ -n "$TAG" ]; then LABEL="Nightly ${TAG%-*}"; else LABEL="commit $SHORT"; fi
+          echo "ENGINE_LABEL=$LABEL" >> "$GITHUB_ENV"
+          echo "движок: $LABEL"
+
+      - name: Исходники движка на пине
+        run: |
+          git init -q src
+          cd src
+          git remote add origin https://github.com/horizon-rust/horizon
+          git fetch -q --depth 1 origin "${{ inputs.pin }}"
+          git checkout -q FETCH_HEAD
+          echo "HEAD=$(git rev-parse --short HEAD) файлов=$(git ls-files | wc -l)"
+
+      - name: horizon-mixins
+        run: |
+          git clone -q https://github.com/horizon-rust/horizon-mixins mixins
+          cd mixins
+          git checkout -q "${{ inputs.mixins_rev }}"
+          . "$HOME/.cargo/env"
+          cargo build -q --release
+          ls -l target/release/ | grep -i mixins
+
+      - name: Список модов
+        run: |
+          if [ -n "${{ inputs.mods }}" ]; then
+            : > list.txt
+            for item in ${{ inputs.mods }}; do
+              case "$item" in
+                http*) echo "$(basename "${item%.hnmod}")|url|$item" >> list.txt ;;
+                *) echo "$item|bundle|https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/ci/bundles/$item.hnmod" >> list.txt ;;
+              esac
+            done
+          else
+            python3 - <<'PY' > list.txt
+          import json, urllib.request
+          data = json.load(urllib.request.urlopen("https://horizon-rust.github.io/horizon-mods/index.json"))
+          for project in data.get("projects", data):
+              versions = project.get("versions") or []
+              if not versions:
+                  continue
+              latest = versions[0]
+              url = (latest.get("file") or {}).get("url")
+              if not url or not str(latest.get("api", "")).startswith("native-"):
+                  continue
+              print(f"{project['id']}|{latest['version']}|{url}")
+          PY
+          fi
+          wc -l list.txt
+          head -5 list.txt
+
+      - name: Проверка каждого мода
+        run: |
+          set -uo pipefail
+          . "$HOME/.cargo/env"
+          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target-check"
+          cp -a src pristine
+          : > results.tsv
+          limit="${{ inputs.limit }}"
+          n=0
+          while IFS='|' read -r id version url; do
+            [ -n "${id:-}" ] || continue
+            if [ "$limit" != "0" ] && [ "$n" -ge "$limit" ]; then break; fi
+            n=$((n+1))
+            echo "== $id $version"
+            rm -rf work out mod.hnmod mods.incoming
+            cp -a pristine work
+            mkdir -p mods.incoming/mod1
+            if ! curl -fsSL --retry 3 -o mod.hnmod "$url"; then
+              printf '%s\t%s\t%s\t%s\n' "$id" "$version" "download" "не скачался" >> results.tsv
+              continue
+            fi
+            unzip -oq mod.hnmod -d mods.incoming/mod1
+            mkdir -p mods.incoming/mixins
+            if [ -d mods.incoming/mod1/mixins ]; then
+              cp -a mods.incoming/mod1/mixins/. mods.incoming/mixins/
+            else
+              cp -a mods.incoming/mod1/. mods.incoming/mixins/
+            fi
+            if ! ./mixins/target/release/horizon-mixins apply \
+                   --workspace work --mods mods.incoming/mixins --out out > apply.log 2>&1; then
+              note=$(grep -m1 -E '"status"|error|missing|not found' apply.log | tr '\n' ' ' | cut -c1-200)
+              printf '%s\t%s\t%s\t%s\n' "$id" "$version" "apply" "${note:-миксины не легли}" >> results.tsv
+              continue
+            fi
+            if ( cd out && cargo check --no-default-features -p horizon-client > ../check.log 2>&1 ); then
+              printf '%s\t%s\t%s\t%s\n' "$id" "$version" "ok" "" >> results.tsv
+            else
+              note=$(grep -m2 -E '^error' check.log | tr '\n' ' ' | cut -c1-200)
+              printf '%s\t%s\t%s\t%s\n' "$id" "$version" "check" "${note:-не компилируется}" >> results.tsv
+            fi
+          done < list.txt
+          echo "== результаты:"; cat results.tsv
+
+      - name: Матрица и summary
+        run: python3 ci/compat-report.py
+
+      - name: Закоммитить матрицу
+        run: |
+          git config user.email ci@moonmc.invalid
+          git config user.name "MoonMC CI"
+          git add ci/compat
+          if git diff --cached --quiet; then
+            echo "матрица не изменилась"
+          else
+            git commit -q -m "compat: ${ENGINE_LABEL} ($(printf '%s' "$PIN" | cut -c1-7))"
+            git push -q origin HEAD:main
+            echo "матрица обновлена"
+          fi
