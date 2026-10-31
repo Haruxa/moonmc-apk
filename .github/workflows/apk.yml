@@ -218,14 +218,13 @@ jobs:
           fetch patch-branding.py
           fetch touch_layout.rs
           # все бандлы .hnmod: какие собирать, выбирает лаунчер (input native_mods)
-          mkdir -p src/ci/bundles ci/bundles
+          mkdir -p src/ci/bundles
           gh api "repos/${{ github.repository }}/git/trees/${{ github.sha }}?recursive=1" \
             --jq '.tree[] | select(.type=="blob") | select(.path|startswith("ci/bundles/")) | select(.path|endswith(".hnmod")) | .path' \
             | while read -r p; do
             mkdir -p "src/$(dirname "$p")"
             gh api "repos/${{ github.repository }}/contents/$p?ref=${{ github.sha }}" \
               -H "Accept: application/vnd.github.raw" > "src/$p"
-            cp "src/$p" "$p"
           done
           echo "   бандлы: $(find src/ci/bundles -name '*.hnmod' | wc -l) файлов: $(ls src/ci/bundles | tr '\n' ' ')"
           # экран первой загрузки MoonMC (java рисуется кодом)
@@ -311,7 +310,7 @@ jobs:
               echo "  нативные бандлы не выбраны — собираю без модов"
               exit 0
             fi
-            for f in src/ci/bundles/*.hnmod ci/bundles/*.hnmod; do
+            for f in src/ci/bundles/*.hnmod; do
               [ -e "$f" ] || continue
               # выбор лаунчера: имя бандла без расширения в списке (пусто = все)
               name=$(basename "$f" .hnmod)
