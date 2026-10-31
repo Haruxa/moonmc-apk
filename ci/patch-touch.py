@@ -19,6 +19,7 @@ CLIENT = ROOT / "crates/horizon-client/src"
 TOUCH = CLIENT / "game/touch.rs"
 GAME = CLIENT / "game.rs"
 MODULE = CLIENT / "game/touch_layout.rs"
+MENU = CLIENT / "game/touch_menu.rs"
 
 
 ERRORS: list[str] = []
@@ -38,6 +39,9 @@ def replace(text: str, old: str, new: str, what: str) -> str:
 def main() -> None:
     source = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "ci/touch_layout.rs")
     MODULE.write_text(source.read_text())
+    # оверлей профилей рядом: game/touch_menu.rs
+    menu = pathlib.Path(sys.argv[2] if len(sys.argv) > 2 else "ci/touch_menu.rs")
+    MENU.write_text(menu.read_text())
 
     # 1. Регистрация модуля рядом с `mod touch;`.
     mod = GAME.read_text()
@@ -53,6 +57,19 @@ def main() -> None:
         visibility = anchor.strip().split("mod ")[0]
         mod = mod.replace(anchor, f"{anchor}\n{indent}{visibility}mod touch_layout;", 1)
         GAME.write_text(mod)
+    mod = GAME.read_text()
+    if "mod touch_menu;" not in mod:
+        anchor_line = next(
+            (line for line in mod.splitlines() if "mod touch_layout;" in line),
+            None,
+        )
+        if anchor_line is None:
+            ERRORS.append("game.rs: нет mod touch_layout;")
+        else:
+            indent = anchor_line[: len(anchor_line) - len(anchor_line.lstrip())]
+            visibility = anchor_line.strip().split("mod ")[0]
+            mod = mod.replace(anchor_line, f"{anchor_line}\n{indent}{visibility}mod touch_menu;", 1)
+            GAME.write_text(mod)
 
     # 0. Касания и «назад»: при переносе порта на новый пин cherry-pick оставляет
     # window_event от движка (в нём нет WindowEvent::Touch), и тапы не доходят до игры.
@@ -237,6 +254,38 @@ def main() -> None:
     )
 
     # 9. Отрисовка дополнительных контролов.
+    # 11a. Оверлей профилей: виден и в мире, и в меню.
+    text = replace(
+        text,
+        "    pub(super) fn draw_touch(&mut self, batch: &mut HudBatch) {\n        self.touch.gui = (batch.width, batch.height);\n        if !self.touch.active || self.touch_in_menu() || self.player.is_none() {\n            return;\n        }",
+        """    pub(super) fn draw_touch(&mut self, batch: &mut HudBatch) {
+        self.touch.gui = (batch.width, batch.height);
+        // Кнопка «профили» и её панель рисуются поверх всего — и в меню тоже.
+        {
+            let atlas = &self.gui.atlas;
+            let (w, h) = (batch.width, batch.height);
+            touch_menu::draw(batch, atlas, w, h, self.touch.mode == Mode::Tap);
+        }
+        if !self.touch.active || self.touch_in_menu() || self.player.is_none() {
+            return;
+        }""",
+        "оверлей профилей",
+    )
+
+    # 11b. Тап по оверлею перехватываем до всего остального.
+    text = replace(
+        text,
+        "        match t.phase {\n            TouchPhase::Started => {\n                let role = if self.touch_in_menu() {",
+        """        match t.phase {
+            TouchPhase::Started => {
+                if let Some(act) = touch_menu::tap(at, batch.width, batch.height) {
+                    self.touch_menu_act(act);
+                    return;
+                }
+                let role = if self.touch_in_menu() {""",
+        "тап по оверлею",
+    )
+
     text = replace(
         text,
         "        // Shift lock's aim: a ring at the centre.",
@@ -307,6 +356,32 @@ def main() -> None:
     fn touch_in_menu(&self) -> bool {""",
         "touch_extra",
     )
+
+    # 11c. Действия оверлея.
+    text = replace(
+        text,
+        "    /// An extra control of the touch profile: a key, a hold, a macro or a profile switch.",
+        """    /// What a tap on the profiles overlay asked for.
+    fn touch_menu_act(&mut self, act: touch_menu::Act) {
+        use touch_menu::Act;
+        match act {
+            Act::Activate(name) => {
+                touch_layout::activate(&name);
+                touch_menu::refresh();
+            }
+            Act::Mode => self.switch_touch_mode(),
+            Act::Bedrock => {
+                touch_layout::write_bedrock();
+                touch_menu::refresh();
+            }
+            Act::Toggle | Act::Close | Act::Page(_) => {}
+        }
+    }
+
+    /// An extra control of the touch profile: a key, a hold, a macro or a profile switch.""",
+        "действия оверлея",
+    )
+
 
     TOUCH.write_text(text)
     if ERRORS:
