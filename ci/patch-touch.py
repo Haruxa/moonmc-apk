@@ -14,7 +14,7 @@ Everything is anchored on exact source text and fails loudly if the pin moved.
 import pathlib
 import sys
 
-ROOT = pathlib.Path("src")
+ROOT = pathlib.Path(".")
 CLIENT = ROOT / "crates/horizon-client/src"
 TOUCH = CLIENT / "game/touch.rs"
 GAME = CLIENT / "game.rs"
