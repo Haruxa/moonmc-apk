@@ -96,6 +96,7 @@ final class MoonSplash extends Dialog {
         private final float[] starDrift = new float[STARS];
         private final long started = SystemClock.uptimeMillis();
         private final String version;
+        private final String engine;
         private final Bitmap logo;
 
         private String step = "";
@@ -137,6 +138,16 @@ final class MoonSplash extends Dialog {
                 // без картинки нарисуем месяц кодом
             }
             logo = bitmap;
+            // на каком движке собрано: строку пишет CI (android/res/values/engine.xml)
+            String build = "";
+            try {
+                int id = context.getResources().getIdentifier(
+                    "moonmc_engine", "string", context.getPackageName());
+                if (id != 0) build = context.getString(id);
+            } catch (RuntimeException e) {
+                // без подписи движка
+            }
+            engine = build;
         }
 
         void step(String value) {
@@ -209,7 +220,7 @@ final class MoonSplash extends Dialog {
             float loaderY = Math.max(titleBaseline + unit * 0.105f, h * 0.545f);
             drawLoader(canvas, cx, loaderY, unit, seconds);
             drawStep(canvas, cx, loaderY + unit * 0.048f, h - unit * 0.075f, w, unit);
-            drawFooter(canvas, cx, h, unit);
+            drawFooter(canvas, cx, h, w, unit);
 
             postInvalidateOnAnimation();
         }
@@ -398,15 +409,24 @@ final class MoonSplash extends Dialog {
             }
         }
 
-        /** Низ экрана: имя и версия. */
-        private void drawFooter(Canvas canvas, float cx, float h, float unit) {
+        /** Низ экрана: имя, версия и движок (Nightly). */
+        private void drawFooter(Canvas canvas, float cx, float h, float w, float unit) {
+            String name = version.isEmpty() ? "MoonMC" : "MoonMC  " + version;
+            String full = engine.isEmpty() ? name : name + "  ·  " + engine;
             text.setTextAlign(Paint.Align.CENTER);
             text.setColor(0x5CFFFFFF);
             text.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-            text.setTextSize(unit * 0.018f);
             text.setLetterSpacing(0.14f);
-            canvas.drawText(version.isEmpty() ? "MoonMC" : "MoonMC  " + version,
-                cx, h - unit * 0.052f, text);
+            float size = unit * 0.018f;
+            text.setTextSize(size);
+            // не вылезаем за поля: сперва жмём шрифт, потом убираем версию
+            while (size > unit * 0.011f && text.measureText(full) > w * 0.82f) {
+                size -= unit * 0.0012f;
+                text.setTextSize(size);
+            }
+            String line = full;
+            if (text.measureText(line) > w * 0.82f && !engine.isEmpty()) line = engine;
+            canvas.drawText(line, cx, h - unit * 0.052f, text);
             text.setLetterSpacing(0f);
         }
     }
