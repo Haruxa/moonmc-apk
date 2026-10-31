@@ -217,7 +217,7 @@ final class MoonSplash extends Dialog {
             float titleBaseline = logoY + radius * 3.15f;
             drawTitle(canvas, cx, titleBaseline, unit);
 
-            float loaderY = Math.max(titleBaseline + unit * 0.105f, h * 0.545f);
+            float loaderY = Math.max(titleBaseline + unit * 0.080f, h * 0.545f);
             drawLoader(canvas, cx, loaderY, unit, seconds);
             drawStep(canvas, cx, loaderY + unit * 0.048f, h - unit * 0.075f, w, unit);
             drawFooter(canvas, cx, h, w, unit);
@@ -317,12 +317,6 @@ final class MoonSplash extends Dialog {
             text.setLetterSpacing(0.01f);
             canvas.drawText("MoonMC", cx, baseline, text);
 
-            text.setColor(DIM);
-            text.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-            text.setTextSize(unit * 0.019f);
-            text.setLetterSpacing(0.30f);
-            canvas.drawText("MINECRAFT  BEDROCK  EDITION", cx, baseline + unit * 0.042f, text);
-            text.setLetterSpacing(0f);
         }
 
         /**
