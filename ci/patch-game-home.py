@@ -20,6 +20,7 @@
 непатченный APK нельзя.
 """
 import pathlib
+import re
 import sys
 
 
@@ -145,6 +146,30 @@ EDITS = [
 ]
 
 
+def patch_android_features() -> None:
+    """Порт просит фичу `horizon-client/mods`, а в новых пинах моды собраны всегда.
+
+    Если у horizon-client больше нет фичи `mods`, её имя в фиче порта убираем:
+    остаётся `horizon-mods/runtime` — она и включает wasm-рантайм модов.
+    """
+    engine = pathlib.Path("crates/horizon-client/Cargo.toml")
+    port = pathlib.Path("crates/horizon-android/Cargo.toml")
+    if not engine.is_file() or not port.is_file():
+        return
+    text = engine.read_text()
+    if "[features]" not in text:
+        return
+    block = text.split("[features]", 1)[1]
+    block = block.split("\n[", 1)[0]
+    if re.search(r"(?m)^mods\s*=", block):
+        return  # у этого пина фича ещё есть — порт как есть
+    port_text = port.read_text()
+    old = 'mods = ["horizon-client/mods", "horizon-mods/runtime"]'
+    if old in port_text:
+        port.write_text(port_text.replace(old, 'mods = ["horizon-mods/runtime"]', 1))
+        print("Cargo.toml: у пина нет фичи horizon-client/mods — оставил horizon-mods/runtime")
+
+
 # Ребрендинг: старые пути и подписи «MargyMC» -> «MoonMC» (в том числе /sdcard/MoonMC/minecraft).
 REBRAND = [
     pathlib.Path("crates/horizon-client/src/android_setup.rs"),
@@ -173,6 +198,9 @@ def main() -> int:
             continue
         path.write_text(text.replace(original, patched, 1))
         print(f"{path}: пропатчен")
+    # 2b. Фичи порта под этот пин
+    patch_android_features()
+
     # 3. Имя проекта: из него же складывается путь /sdcard/MoonMC/minecraft
     renamed = 0
     for path in REBRAND:
