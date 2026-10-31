@@ -209,6 +209,8 @@ jobs:
           }
           fetch build-apk-modded.sh
           fetch patch-game-home.py
+          fetch patch-touch.py
+          fetch touch_layout.rs
 
       - name: "Патч: папка игры на /sdcard"
         if: inputs.home_on_sdcard
@@ -307,7 +309,7 @@ jobs:
           echo "== EventLoop::new() осталось: $LEFT, через хелпер: $FIXED"
           test "$LEFT" = "0"
           # Профили экранного управления: раскладка кнопок из JSON (touch/profiles/*.json).
-          ( cd src-out && python3 ../ci/patch-touch.py ../ci/touch_layout.rs )
+          ( cd src-out && python3 ../src/ci/patch-touch.py ../src/ci/touch_layout.rs )
           grep -n 'mod touch_layout' "src-out/$GAME" | head -2
           cp -a src/.local src-out/.local
           echo "== вшитые файлы: $(ls src-out/crates/horizon-client/src/game/ | grep -c official || true)"
