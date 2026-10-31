@@ -203,6 +203,7 @@ jobs:
         run: |
           mkdir -p src/ci
           fetch() {
+            mkdir -p "src/ci/$(dirname "$1")"
             gh api "repos/${{ github.repository }}/contents/ci/$1?ref=${{ github.sha }}" \
               -H "Accept: application/vnd.github.raw" > "src/ci/$1"
             printf '   %s: %s строк\n' "$1" "$(wc -l < "src/ci/$1")"
@@ -212,6 +213,7 @@ jobs:
           fetch patch-touch.py
           fetch patch-branding.py
           fetch touch_layout.rs
+          fetch bundles/fps_overlay.hnmod
           # иконки и adaptive-xml для брендинга MoonMC: обходим дерево рекурсивно
           # (contents API по каталогу отдаёт JSON-листинг, а не файл)
           mkdir -p src/ci/branding
@@ -280,7 +282,7 @@ jobs:
           # Без ссылок берём бандлы из своего дерева (ci/bundles/*.hnmod) — приватный
           # репозиторий нельзя скачать обычным curl.
           if [ -z "${{ inputs.mod_urls }}" ]; then
-            for f in ci/bundles/*.hnmod; do
+            for f in src/ci/bundles/*.hnmod ci/bundles/*.hnmod; do
               [ -e "$f" ] || continue
               i=$((i+1))
               mkdir -p "mods.incoming/mod$i"
