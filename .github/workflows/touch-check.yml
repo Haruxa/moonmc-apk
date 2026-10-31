@@ -57,6 +57,15 @@ jobs:
         working-directory: src
         run: python3 ../ci/patch-touch.py ../ci/touch_layout.rs
 
+      - name: EventLoop на Android-путь (как в apk.yml)
+        working-directory: src
+        run: |
+          GAME=crates/horizon-client/src/game.rs
+          sed -i -e 's/winit::event_loop::EventLoop::new()/crate::event_loop::new()/g' \
+                 -e 's/EventLoop::new()/crate::event_loop::new()/g' "$GAME"
+          echo "через хелпер: $(grep -c 'crate::event_loop::new()' "$GAME")"
+          test "$(grep -c 'EventLoop::new()' "$GAME" || true)" = "0"
+
       - name: Rust + цель aarch64-linux-android
         working-directory: src
         run: |
