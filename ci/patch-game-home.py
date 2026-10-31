@@ -184,6 +184,39 @@ def patch_android_features() -> None:
     print(f"фичи порта: {current.group(0)} -> {line}")
 
 
+PORT_MODULES = ("event_loop", "msa")
+
+
+def patch_lib_modules() -> None:
+    """Модули, которые добавляет порт, но которые может потерять cherry-pick.
+
+    MargyMC объявляет в `crates/horizon-client/src/lib.rs` ещё два модуля
+    (`event_loop`, `msa`). При переносе порта на новый пин `git cherry-pick -X ours`
+    может оставить lib.rs от движка — тогда модули пропадают и android_setup.rs не
+    собирается. Возвращаем их, только если файлы рядом действительно есть.
+    """
+    lib = pathlib.Path("crates/horizon-client/src/lib.rs")
+    if not lib.is_file():
+        return
+    text = lib.read_text()
+    added = []
+    for name in PORT_MODULES:
+        if f"pub mod {name};" in text:
+            continue
+        if not (lib.parent / f"{name}.rs").is_file():
+            print(f"::warning::crates/horizon-client/src/{name}.rs нет в этом пине — модуль не объявляю")
+            continue
+        anchor = re.search(r"(?m)^(pub )?mod [a-z_0-9]+;\n", text)
+        if anchor is None:
+            text = text.rstrip() + f"\npub mod {name};\n"
+        else:
+            text = text[: anchor.end()] + f"pub mod {name};\n" + text[anchor.end():]
+        added.append(name)
+    if added:
+        lib.write_text(text)
+        print(f"lib.rs: вернул модули порта: {', '.join(added)}")
+
+
 # Ребрендинг: старые пути и подписи «MargyMC» -> «MoonMC» (в том числе /sdcard/MoonMC/minecraft).
 REBRAND = [
     pathlib.Path("crates/horizon-client/src/android_setup.rs"),
@@ -212,7 +245,8 @@ def main() -> int:
             continue
         path.write_text(text.replace(original, patched, 1))
         print(f"{path}: пропатчен")
-    # 2b. Фичи порта под этот пин
+    # 2b. Модули порта в lib.rs и фичи порта под этот пин
+    patch_lib_modules()
     patch_android_features()
 
     # 3. Имя проекта: из него же складывается путь /sdcard/MoonMC/minecraft
