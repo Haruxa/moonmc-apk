@@ -242,8 +242,8 @@ pub(super) fn extra_icon(index: usize) -> Option<String> {
 
 /// Draws a built-in pixel icon centred on (x, y) with the button's radius.
 pub(super) fn draw_icon(
-    batch: &mut super::hud::HudBatch,
-    atlas: &super::hud::HudAtlas,
+    batch: &mut crate::hud::HudBatch,
+    atlas: &crate::hud::HudAtlas,
     name: &str,
     x: f32,
     y: f32,
