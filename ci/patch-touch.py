@@ -54,6 +54,50 @@ def main() -> None:
         mod = mod.replace(anchor, f"{anchor}\n{indent}{visibility}mod touch_layout;", 1)
         GAME.write_text(mod)
 
+    # 0. Касания и кнопка «назад»: в новых пинах cherry-pick оставляет window_event от
+    # движка, у которого нет веток WindowEvent::Touch и BrowserBack — тогда экран вообще
+    # не реагирует на тапы.
+    gtext = GAME.read_text()
+    if "self.touch_event(event_loop, id, touch)" not in gtext:
+        guard = (
+            "    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {\n"
+            "        if self.window.as_ref().is_none_or(|w| w.id() != id) {\n"
+            "            return;\n"
+            "        }"
+        )
+        guard_mut = guard.replace("event: WindowEvent", "mut event: WindowEvent")
+        arm = """
+
+        // MoonMC: касания приходят только здесь. Без этой ветки экран не реагирует.
+        if let WindowEvent::Touch(touch) = event {
+            self.touch_event(event_loop, id, touch);
+            return;
+        }"""
+        if guard in gtext:
+            gtext = gtext.replace(guard, guard + arm, 1)
+        elif guard_mut in gtext:
+            gtext = gtext.replace(guard_mut, guard_mut + arm, 1)
+        else:
+            ERRORS.append("game.rs: нет window_event для ветки Touch")
+        if "self.touch_back()" not in gtext and "BrowserBack" not in gtext:
+            back = """        // Android's back key goes back as a controller's Start does.
+        if let WindowEvent::KeyboardInput { event, .. } = &event
+            && event.logical_key
+                == winit::keyboard::Key::Named(winit::keyboard::NamedKey::BrowserBack)
+        {
+            if event.state == ElementState::Pressed && !event.repeat {
+                self.touch_back();
+            }
+            return;
+        }"""
+            # ставим сразу после ветки Touch
+            marker = "            self.touch_event(event_loop, id, touch);\n            return;\n        }"
+            if marker in gtext:
+                gtext = gtext.replace(marker, marker + "\n" + back, 1)
+                print("game.rs: вернул кнопку «назад»")
+        GAME.write_text(gtext)
+        print("game.rs: вернул обработку WindowEvent::Touch")
+
     text = TOUCH.read_text()
 
     # 2. Импорт модуля.
