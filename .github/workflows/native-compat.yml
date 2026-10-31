@@ -132,23 +132,31 @@ jobs:
               printf '%s\t%s\t%s\t%s\n' "$id" "$version" "download" "не скачался" >> results.tsv
               continue
             fi
-            unzip -oq mod.hnmod -d mods.incoming/mod1
+            if ! unzip -oq mod.hnmod -d mods.incoming/mod1; then
+              printf '%s\t%s\t%s\t%s\n' "$id" "$version" "download" "архив не распаковался" >> results.tsv
+              continue
+            fi
             mkdir -p mods.incoming/mixins
             if [ -d mods.incoming/mod1/mixins ]; then
               cp -a mods.incoming/mod1/mixins/. mods.incoming/mixins/
             else
               cp -a mods.incoming/mod1/. mods.incoming/mixins/
             fi
+            # Мод объявляет свой пин движка; для проверки совместимости целимся в нужный.
+            find mods.incoming/mixins -name 'horizon-mixin.toml' -print0 2>/dev/null \
+              | while IFS= read -r -d '' manifest; do
+                  sed -i -E "s|^(horizon_revision[[:space:]]*=[[:space:]]*)\"[^\"]*\"|\1\"$PIN\"|" "$manifest"
+                done || true
             if ! ./mixins/target/release/horizon-mixins apply \
                    --workspace work --mods mods.incoming/mixins --out out > apply.log 2>&1; then
-              note=$(grep -m1 -E '"status"|error|missing|not found' apply.log | tr '\n' ' ' | cut -c1-200)
+              note=$(grep -m1 -E '"status"|error|missing|not found' apply.log 2>/dev/null | tr '\n' ' ' | cut -c1-200 || true)
               printf '%s\t%s\t%s\t%s\n' "$id" "$version" "apply" "${note:-миксины не легли}" >> results.tsv
               continue
             fi
             if ( cd out && cargo check --no-default-features -p horizon-client > ../check.log 2>&1 ); then
               printf '%s\t%s\t%s\t%s\n' "$id" "$version" "ok" "" >> results.tsv
             else
-              note=$(grep -m2 -E '^error' check.log | tr '\n' ' ' | cut -c1-200)
+              note=$(grep -m2 -E '^error' check.log 2>/dev/null | tr '\n' ' ' | cut -c1-200 || true)
               printf '%s\t%s\t%s\t%s\n' "$id" "$version" "check" "${note:-не компилируется}" >> results.tsv
             fi
           done < list.txt
