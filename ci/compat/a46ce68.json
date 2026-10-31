@@ -3,12 +3,201 @@
   "engine": "Nightly 2026-10-30",
   "mixins": "3f99a5c60dfa311cc365524c44ae2fd799bfa1de",
   "generated": "2026-10-31",
-  "checked": 1,
-  "passed": 1,
+  "checked": 28,
+  "passed": 26,
   "mods": [
     {
+      "id": "appleskin",
+      "version": "0.1.1",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "biomecompass",
+      "version": "0.2.2",
+      "ok": false,
+      "stage": "check",
+      "note": "error[E0308]: mismatched types error: could not compile `horizon-client` (lib) due to 1 previous error"
+    },
+    {
+      "id": "blockscope",
+      "version": "0.3.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "carryblock",
+      "version": "0.1.2",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "chatheads",
+      "version": "0.1.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "classic_zoom",
+      "version": "2.0.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "coords_hud",
+      "version": "2.0.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "distant_horizons",
+      "version": "0.1.0",
+      "ok": false,
+      "stage": "check",
+      "note": "error[E0599]: no method named `merge_remote_tree` found for mutable reference `&mut game::Game<'_>` in the current scope error: could not compile `horizon-client` (bin \"horizon-client\") due to 1 previ"
+    },
+    {
+      "id": "eatinganimation",
+      "version": "0.1.1",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "enchantmenthints",
+      "version": "0.1.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "fly_speed",
+      "version": "0.1.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
       "id": "fps_overlay",
-      "version": "bundle",
+      "version": "2.0.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "fullbright",
+      "version": "1.0.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "itemnew",
+      "version": "0.1.1",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "jei",
+      "version": "0.1.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "keystrokes",
+      "version": "2.0.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "lookat",
+      "version": "0.2.1",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "minimap",
+      "version": "2.0.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "mousetricks",
+      "version": "0.2.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "recipes",
+      "version": "2.0.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "rightharvest",
+      "version": "0.1.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "serverify",
+      "version": "0.1.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "shulker_peek",
+      "version": "0.1.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "smartf3",
+      "version": "0.1.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "treefall",
+      "version": "0.3.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "veinminer",
+      "version": "0.3.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "xtoxray",
+      "version": "2026.29.0",
+      "ok": true,
+      "stage": "ok",
+      "note": ""
+    },
+    {
+      "id": "zoom",
+      "version": "2.0.0",
       "ok": true,
       "stage": "ok",
       "note": ""
