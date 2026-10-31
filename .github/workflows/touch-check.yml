@@ -1,0 +1,109 @@
+# Проверка патча экранного управления: раскладка кнопок из JSON-профиля.
+# Клонирует пин horizon, накатывает MargyMC, применяет патчи и делает cargo check.
+name: touch-check
+
+on:
+  workflow_dispatch:
+    inputs:
+      pin:
+        description: "Пин horizon-rust/horizon"
+        required: true
+        default: "6f8c7a0e5d531d3834c4d0be4659a1db8e7e5c2a"
+      mixins_rev:
+        description: "Ревизия horizon-mixins"
+        required: false
+        default: "0d6b103c70633d8fd9443d8d0acd3aadaacedb06"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Окружение раннера
+        run: |
+          echo "cpu=$(nproc)"; free -h; df -h /
+          java -version 2>&1 | head -2
+
+      - name: Освободить место на диске
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/az \
+                      "$AGENT_TOOLSDIRECTORY" /usr/local/lib/android/sdk/system-images || true
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - name: Дерево: пин horizon + MargyMC
+        run: |
+          git clone --quiet https://github.com/horizon-rust/horizon src
+          cd src
+          git checkout -q -B build "${{ inputs.pin }}"
+          git config user.email ci@margymc.local
+          git config user.name margymc-ci
+          git fetch --quiet https://git.narez.xyz/narezany/MargyMC \
+            d4aaf6c53a9280ae8d8b0cedff0865661c6bb39f 7fbee7186d230003cffd44b34eee9be368a59188
+          git cherry-pick -n -X ours d4aaf6c53a9280ae8d8b0cedff0865661c6bb39f 7fbee7186d230003cffd44b34eee9be368a59188
+          find . -type l -not -path './.git/*' -delete || true
+          echo "--- game.rs:"; grep -n "mod touch" crates/horizon-client/src/game.rs || true
+
+      - name: Патч домашней папки (та же, что в apk.yml)
+        run: python3 ci/patch-game-home.py
+
+      - name: Патч профилей управления
+        run: python3 ci/patch-touch.py ci/touch_layout.rs
+
+      - name: Rust + цель aarch64-linux-android
+        working-directory: src
+        run: |
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+          . "$HOME/.cargo/env"
+          cargo --version
+          rustup target add aarch64-linux-android
+
+      - name: Кэш target и registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            src/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: touch-${{ inputs.pin }}-${{ hashFiles('src/Cargo.lock') }}
+          restore-keys: |
+            touch-${{ inputs.pin }}-
+
+      - name: cargo check -p horizon-client --features mods
+        id: check
+        continue-on-error: true
+        working-directory: src
+        run: |
+          set -o pipefail
+          . "$HOME/.cargo/env"
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          NDK="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-$(ls -d "$SDK"/ndk/* 2>/dev/null | sort -V | tail -1)}}"
+          NDK_BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export ANDROID_NDK_HOME="$NDK" ANDROID_NDK_ROOT="$NDK" SDKROOT="$NDK"
+          export CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android29-clang"
+          export CXX_aarch64_linux_android="$NDK_BIN/aarch64-linux-android29-clang++"
+          export AR_aarch64_linux_android="$NDK_BIN/llvm-ar"
+          export RANLIB_aarch64_linux_android="$NDK_BIN/llvm-ranlib"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CC_aarch64_linux_android"
+          cargo check --locked --target aarch64-linux-android -p horizon-client --features mods \
+            2>&1 | tee /tmp/touch.log
+
+      - name: Итог
+        if: always()
+        run: |
+          {
+            echo "## touch-check"
+            echo '```'
+            grep -nE '^(error|warning: unused)' -A 8 /tmp/touch.log | head -80 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          tail -30 /tmp/touch.log || true
+
+      - name: Провалить, если check не прошёл
+        if: steps.check.outcome != 'success'
+        run: exit 1
