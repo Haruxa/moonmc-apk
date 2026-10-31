@@ -50,10 +50,12 @@ jobs:
           echo "--- game.rs:"; grep -n "mod touch" crates/horizon-client/src/game.rs || true
 
       - name: Патч домашней папки (та же, что в apk.yml)
-        run: python3 ci/patch-game-home.py
+        working-directory: src
+        run: python3 ../ci/patch-game-home.py
 
       - name: Патч профилей управления
-        run: python3 ci/patch-touch.py ci/touch_layout.rs
+        working-directory: src
+        run: python3 ../ci/patch-touch.py ../ci/touch_layout.rs
 
       - name: Rust + цель aarch64-linux-android
         working-directory: src
