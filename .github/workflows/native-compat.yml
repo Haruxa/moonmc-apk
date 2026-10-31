@@ -149,7 +149,8 @@ jobs:
                 done || true
             if ! ./mixins/target/release/horizon-mixins apply \
                    --workspace work --mods mods.incoming/mixins --out out > apply.log 2>&1; then
-              note=$(grep -m1 -E '"status"|error|missing|not found' apply.log 2>/dev/null | tr '\n' ' ' | cut -c1-200 || true)
+              echo "== apply упал, последние строки:"; tail -15 apply.log || true
+              note=$(tail -3 apply.log 2>/dev/null | tr '\n' ' ' | tr -s ' ' | cut -c1-200 || true)
               printf '%s\t%s\t%s\t%s\n' "$id" "$version" "apply" "${note:-миксины не легли}" >> results.tsv
               continue
             fi
