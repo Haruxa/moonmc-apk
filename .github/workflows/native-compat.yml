@@ -42,7 +42,7 @@ jobs:
       - name: Rust
         run: |
           curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
-          . "$HOME/.cargo/env"; rustc -vV | head -2
+          . "$HOME/.cargo/env"; rustc -vV | sed -n 1,2p
 
       - name: Кэш крейтов и target
         uses: actions/cache@v4
