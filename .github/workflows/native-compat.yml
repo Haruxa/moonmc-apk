@@ -142,6 +142,8 @@ jobs:
             else
               cp -a mods.incoming/mod1/. mods.incoming/mixins/
             fi
+            # horizon-mixins отвергает симлинки (CLAUDE.md -> AGENTS.md в дереве движка)
+            find work -type l -not -path 'work/.git/*' -delete 2>/dev/null || true
             # Мод объявляет свой пин движка; для проверки совместимости целимся в нужный.
             find mods.incoming/mixins -name 'horizon-mixin.toml' -print0 2>/dev/null \
               | while IFS= read -r -d '' manifest; do
