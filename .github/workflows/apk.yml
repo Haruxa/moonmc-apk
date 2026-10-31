@@ -46,6 +46,10 @@ on:
         description: "Ссылки на .hnmod через пробел (только при native_pin)"
         required: false
         default: ""
+      native_mods:
+        description: "Какие бандлы ci/bundles/*.hnmod вшить (через запятую; пусто = все)"
+        required: false
+        default: ""
 
 defaults:
   run:
@@ -213,7 +217,27 @@ jobs:
           fetch patch-touch.py
           fetch patch-branding.py
           fetch touch_layout.rs
-          fetch bundles/fps_overlay.hnmod
+          # все бандлы .hnmod: какие собирать, выбирает лаунчер (input native_mods)
+          mkdir -p src/ci/bundles ci/bundles
+          gh api "repos/${{ github.repository }}/git/trees/${{ github.sha }}?recursive=1" \
+            --jq '.tree[] | select(.type=="blob") | select(.path|startswith("ci/bundles/")) | select(.path|endswith(".hnmod")) | .path' \
+            | while read -r p; do
+            mkdir -p "src/$(dirname "$p")"
+            gh api "repos/${{ github.repository }}/contents/$p?ref=${{ github.sha }}" \
+              -H "Accept: application/vnd.github.raw" > "src/$p"
+            cp "src/$p" "$p"
+          done
+          echo "   бандлы: $(find src/ci/bundles -name '*.hnmod' | wc -l) файлов: $(ls src/ci/bundles | tr '\n' ' ')"
+          # экран первой загрузки MoonMC (java рисуется кодом)
+          mkdir -p src/ci/splash
+          gh api "repos/${{ github.repository }}/git/trees/${{ github.sha }}?recursive=1" \
+            --jq '.tree[] | select(.type=="blob") | select(.path|startswith("ci/splash/")) | .path' \
+            | while read -r p; do
+            mkdir -p "src/$(dirname "$p")"
+            gh api "repos/${{ github.repository }}/contents/$p?ref=${{ github.sha }}" \
+              -H "Accept: application/vnd.github.raw" > "src/$p"
+          done
+          echo "   экран загрузки: $(find src/ci/splash -name '*.java' | wc -l) файлов"
           # иконки и adaptive-xml для брендинга MoonMC: обходим дерево рекурсивно
           # (contents API по каталогу отдаёт JSON-листинг, а не файл)
           mkdir -p src/ci/branding
@@ -275,15 +299,28 @@ jobs:
           ls -l target/release/ | grep -i mixins
 
       - name: Скачать нативные моды
-        if: inputs.native_pin != ''
+        if: inputs.native_pin != '' && inputs.native_mods != 'none'
         run: |
           mkdir -p mods.incoming
           i=0
           # Без ссылок берём бандлы из своего дерева (ci/bundles/*.hnmod) — приватный
           # репозиторий нельзя скачать обычным curl.
           if [ -z "${{ inputs.mod_urls }}" ]; then
+            wanted="$(printf '%s' "${{ inputs.native_mods }}" | tr ',' ' ')"
+            if [ "$wanted" = "none" ]; then
+              echo "  нативные бандлы не выбраны — собираю без модов"
+              exit 0
+            fi
             for f in src/ci/bundles/*.hnmod ci/bundles/*.hnmod; do
               [ -e "$f" ] || continue
+              # выбор лаунчера: имя бандла без расширения в списке (пусто = все)
+              name=$(basename "$f" .hnmod)
+              if [ -n "$wanted" ]; then
+                case " $wanted " in
+                  *" $name "*) ;;
+                  *) echo "  пропускаю $name (не выбран)"; continue ;;
+                esac
+              fi
               i=$((i+1))
               mkdir -p "mods.incoming/mod$i"
               unzip -o -q "$f" -d "mods.incoming/mod$i"
@@ -306,7 +343,7 @@ jobs:
           test "$i" -gt 0
 
       - name: Вшить моды в дерево
-        if: inputs.native_pin != ''
+        if: inputs.native_pin != '' && inputs.native_mods != 'none'
         run: |
           set -euo pipefail
           . "$HOME/.cargo/env"
