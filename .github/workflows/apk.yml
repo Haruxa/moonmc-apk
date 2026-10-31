@@ -337,12 +337,9 @@ jobs:
           i=0
           # Без ссылок берём бандлы из своего дерева (ci/bundles/*.hnmod) — приватный
           # репозиторий нельзя скачать обычным curl.
-          if [ -z "${{ inputs.mod_urls }}" ]; then
-            wanted="$(printf '%s' "${{ inputs.native_mods }}" | tr ',' ' ')"
-            if [ "$wanted" = "none" ]; then
-              echo "  нативные бандлы не выбраны — собираю без модов"
-              exit 0
-            fi
+          # бандлы и ссылки можно мешать: список сборки в лаунчере даёт и то, и другое
+          wanted="$(printf '%s' "${{ inputs.native_mods }}" | tr ',' ' ')"
+          if [ "$wanted" != "none" ]; then
             for f in src/ci/bundles/*.hnmod; do
               [ -e "$f" ] || continue
               # выбор лаунчера: имя бандла без расширения в списке (пусто = все)
@@ -372,7 +369,7 @@ jobs:
             if [ -d "$d/mixins" ]; then cp -a "$d/mixins/." mods.incoming/mixins/; else cp -a "$d." mods.incoming/mixins/; fi
           done
           echo "  манифестов после раскладки: $(find mods.incoming/mixins -name 'horizon-mixin.toml' | wc -l)"
-          test "$i" -gt 0
+          test "$i" -gt 0 || { echo "::error::не выбрано ни одного мода"; exit 1; }
 
       - name: Вшить моды в дерево
         if: inputs.native_pin != '' && inputs.native_mods != 'none'
