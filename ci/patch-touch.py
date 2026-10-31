@@ -145,11 +145,43 @@ def main() -> None:
         "world_role",
     )
 
-    # 8. Подпись теперь строка.
+    # 8. Кнопка: иконка из профиля (пиксельная, рисуется кодом) или подпись.
+    text = replace(
+        text,
+        "    fn label_stock(self, mode: Mode) -> &'static str {",
+        """    /// The profile's id of this button.
+    fn id(self) -> &'static str {
+        match self {
+            Key::Jump => "jump",
+            Key::Sneak => "sneak",
+            Key::Sprint => "sprint",
+            Key::Inventory => "inventory",
+            Key::Pause => "pause",
+            Key::View => "view",
+            Key::Mode => "mode",
+            Key::Debug => "debug",
+            Key::Chat => "chat",
+            Key::Lock => "lock",
+            Key::Attack => "attack",
+        }
+    }
+
+    fn label_stock(self, mode: Mode) -> &'static str {""",
+        "Key::id",
+    )
     text = replace(
         text,
         "            let label = key.label(mode);\n            let tw = HudBatch::text_width(atlas, label);\n            batch.text(atlas, label, x - tw / 2.0, y - 4.0, 0xE0FF_FFFF, true);",
-        "            let label = key.label(mode);\n            let tw = HudBatch::text_width(atlas, &label);\n            batch.text(atlas, &label, x - tw / 2.0, y - 4.0, 0xE0FF_FFFF, true);",
+        """            match touch_layout::icon(key.id()) {
+                Some(icon) => {
+                    touch_layout::draw_icon(batch, atlas, &icon, x, y, r, 0xE0FF_FFFF);
+                }
+                None => {
+                    let label = key.label(mode);
+                    let tw = HudBatch::text_width(atlas, &label);
+                    batch.text(atlas, &label, x - tw / 2.0, y - 4.0, 0xE0FF_FFFF, true);
+                }
+            }""",
         "подпись кнопки",
     )
 
@@ -159,10 +191,17 @@ def main() -> None:
         "        // Shift lock's aim: a ring at the centre.",
         """        for (i, x, y, r) in touch_layout::extras(w, h, mode == Mode::Tap) {
             disc(batch, atlas, (x, y), r, 0x40FF_FFFF);
-            let label = touch_layout::text(i);
-            if !label.is_empty() {
-                let tw = HudBatch::text_width(atlas, &label);
-                batch.text(atlas, &label, x - tw / 2.0, y - 4.0, 0xE0FF_FFFF, true);
+            match touch_layout::extra_icon(i) {
+                Some(icon) => {
+                    touch_layout::draw_icon(batch, atlas, &icon, x, y, r, 0xE0FF_FFFF);
+                }
+                None => {
+                    let label = touch_layout::text(i);
+                    if !label.is_empty() {
+                        let tw = HudBatch::text_width(atlas, &label);
+                        batch.text(atlas, &label, x - tw / 2.0, y - 4.0, 0xE0FF_FFFF, true);
+                    }
+                }
             }
         }
         // Shift lock's aim: a ring at the centre.""",
