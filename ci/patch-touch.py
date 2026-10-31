@@ -54,49 +54,36 @@ def main() -> None:
         mod = mod.replace(anchor, f"{anchor}\n{indent}{visibility}mod touch_layout;", 1)
         GAME.write_text(mod)
 
-    # 0. Касания и кнопка «назад»: в новых пинах cherry-pick оставляет window_event от
-    # движка, у которого нет веток WindowEvent::Touch и BrowserBack — тогда экран вообще
-    # не реагирует на тапы.
+    # 0. Касания и «назад»: при переносе порта на новый пин cherry-pick оставляет
+    # window_event от движка (в нём нет WindowEvent::Touch), и тапы не доходят до игры.
+    # Правим не тело window_event, а диспетчер App::Ready — он в том же модуле и стабилен.
     gtext = GAME.read_text()
-    if "self.touch_event(event_loop, id, touch)" not in gtext:
-        guard = (
-            "    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {\n"
-            "        if self.window.as_ref().is_none_or(|w| w.id() != id) {\n"
-            "            return;\n"
-            "        }"
-        )
-        guard_mut = guard.replace("event: WindowEvent", "mut event: WindowEvent")
-        arm = """
-
-        // MoonMC: касания приходят только здесь. Без этой ветки экран не реагирует.
-        if let WindowEvent::Touch(touch) = event {
-            self.touch_event(event_loop, id, touch);
-            return;
-        }"""
-        if guard in gtext:
-            gtext = gtext.replace(guard, guard + arm, 1)
-        elif guard_mut in gtext:
-            gtext = gtext.replace(guard_mut, guard_mut + arm, 1)
+    if "game.touch_event(event_loop, id, touch)" not in gtext:
+        dispatch = "            App::Ready(game) => game.window_event(event_loop, id, event),"
+        if dispatch not in gtext:
+            ERRORS.append("game.rs: нет диспетчера App::Ready")
         else:
-            ERRORS.append("game.rs: нет window_event для ветки Touch")
-        if "self.touch_back()" not in gtext and "BrowserBack" not in gtext:
-            back = """        // Android's back key goes back as a controller's Start does.
-        if let WindowEvent::KeyboardInput { event, .. } = &event
-            && event.logical_key
-                == winit::keyboard::Key::Named(winit::keyboard::NamedKey::BrowserBack)
-        {
-            if event.state == ElementState::Pressed && !event.repeat {
-                self.touch_back();
-            }
-            return;
-        }"""
-            # ставим сразу после ветки Touch
-            marker = "            self.touch_event(event_loop, id, touch);\n            return;\n        }"
-            if marker in gtext:
-                gtext = gtext.replace(marker, marker + "\n" + back, 1)
-                print("game.rs: вернул кнопку «назад»")
-        GAME.write_text(gtext)
-        print("game.rs: вернул обработку WindowEvent::Touch")
+            gtext = gtext.replace(
+                dispatch,
+                """            App::Ready(game) => {
+                // MoonMC: касания и системная «назад» — из порта, движок их не знает.
+                if let WindowEvent::Touch(touch) = event {
+                    game.touch_event(event_loop, id, touch);
+                } else if let WindowEvent::KeyboardInput { event: key, .. } = &event
+                    && key.logical_key
+                        == winit::keyboard::Key::Named(winit::keyboard::NamedKey::BrowserBack)
+                {
+                    if key.state == ElementState::Pressed && !key.repeat {
+                        game.touch_back();
+                    }
+                } else {
+                    game.window_event(event_loop, id, event);
+                }
+            }""",
+                1,
+            )
+            GAME.write_text(gtext)
+            print("game.rs: касания и «назад» подключены в диспетчере")
 
     text = TOUCH.read_text()
 
