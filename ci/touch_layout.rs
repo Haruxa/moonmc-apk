@@ -48,6 +48,8 @@ struct Entry {
     r: f32,
     /// The modes it shows in ("aim", "tap"); empty is both.
     modes: Vec<String>,
+    /// A built-in pixel icon instead of the label (`jump`, `sneak`, `sprint`, …).
+    icon: Option<String>,
     action: Action,
 }
 
@@ -163,6 +165,11 @@ fn parse(path: &Path) -> Option<Layout> {
                         .collect()
                 })
                 .unwrap_or_default(),
+            icon: item
+                .get("icon")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .filter(|i| !i.is_empty()),
             id,
             action,
         });
@@ -218,6 +225,214 @@ pub(super) fn label(id: &str) -> Option<String> {
         return None;
     }
     Some(entry.label.clone())
+}
+
+/// A stock button's icon from the profile (None: draw the label).
+pub(super) fn icon(id: &str) -> Option<String> {
+    let slot = slot();
+    let entry = slot.as_ref()?.entries.iter().find(|e| e.id == id)?;
+    entry.icon.clone()
+}
+
+/// An extra control's icon (None: draw the label).
+pub(super) fn extra_icon(index: usize) -> Option<String> {
+    let slot = slot();
+    slot.as_ref()?.entries.get(index)?.icon.clone()
+}
+
+/// Draws a built-in pixel icon centred on (x, y) with the button's radius.
+pub(super) fn draw_icon(
+    batch: &mut super::hud::HudBatch,
+    atlas: &super::hud::HudAtlas,
+    name: &str,
+    x: f32,
+    y: f32,
+    r: f32,
+    color: u32,
+) {
+    let Some(rows) = bitmap(name) else {
+        return;
+    };
+    let size = rows.len() as f32;
+    let pixel = (r * 2.0 * 0.92 / size).max(1.0);
+    let width = rows.first().map_or(0.0, |row| row.len() as f32) * pixel;
+    let left = x - width / 2.0;
+    let top = y - size * pixel / 2.0;
+    for (row, line) in rows.iter().enumerate() {
+        for (column, mark) in line.chars().enumerate() {
+            if mark == '#' {
+                batch.fill(
+                    atlas,
+                    left + column as f32 * pixel,
+                    top + row as f32 * pixel,
+                    pixel,
+                    pixel,
+                    color,
+                );
+            }
+        }
+    }
+}
+
+/// The icons, 12 × 12 pixels, as close to Bedrock's as drawing rectangles allows.
+fn bitmap(name: &str) -> Option<&'static [&'static str]> {
+    Some(match name {
+        "jump" | "fly_up" => &[
+            ".....##.....",
+            "....####....",
+            "...##.##....",
+            "..##..##....",
+            ".....##.....",
+            ".....##.....",
+            ".....##.....",
+            ".....##.....",
+            ".....##.....",
+            "..########..",
+            "..########..",
+            "............",
+        ],
+        "sneak" | "fly_down" => &[
+            "............",
+            "..########..",
+            "..########..",
+            ".....##.....",
+            ".....##.....",
+            ".....##.....",
+            ".....##.....",
+            ".....##.....",
+            "..##..##....",
+            "...##.##....",
+            "....####....",
+            ".....##.....",
+        ],
+        "sprint" => &[
+            "............",
+            "..##....##..",
+            "...##....##.",
+            "....##....##",
+            "....##....##",
+            "...##....##.",
+            "..##....##..",
+            "............",
+            "............",
+            "............",
+            "............",
+            "............",
+        ],
+        "attack" => &[
+            "........####",
+            ".......####.",
+            "......####..",
+            ".....####...",
+            "....####....",
+            "...####.....",
+            "..####......",
+            ".####.......",
+            "####........",
+            ".##.........",
+            ".#..........",
+            "............",
+        ],
+        "inventory" => &[
+            "..########..",
+            "..#......#..",
+            "..#.####.#..",
+            "..########..",
+            "..#.#..#.#..",
+            "..#.#..#.#..",
+            "..#.#..#.#..",
+            "..########..",
+            "............",
+            "............",
+            "............",
+            "............",
+        ],
+        "chat" => &[
+            ".##########.",
+            ".#........#.",
+            ".#.##.##..#.",
+            ".#........#.",
+            ".#.##.##..#.",
+            ".#........#.",
+            ".##########.",
+            "...##.......",
+            "..##........",
+            "............",
+            "............",
+            "............",
+        ],
+        "pause" => &[
+            "...##..##...",
+            "...##..##...",
+            "...##..##...",
+            "...##..##...",
+            "...##..##...",
+            "...##..##...",
+            "...##..##...",
+            "...##..##...",
+            "............",
+            "............",
+            "............",
+            "............",
+        ],
+        "view" => &[
+            "............",
+            "...######...",
+            "..#..##..#..",
+            ".#..####..#.",
+            ".#..####..#.",
+            "..#..##..#..",
+            "...######...",
+            "............",
+            "............",
+            "............",
+            "............",
+            "............",
+        ],
+        "mode" => &[
+            "....##......",
+            "....##......",
+            "....##......",
+            "..######....",
+            "..######....",
+            "..######....",
+            "..######....",
+            "..######....",
+            "............",
+            "............",
+            "............",
+            "............",
+        ],
+        "lock" => &[
+            "....####....",
+            "...##..##...",
+            "...##..##...",
+            "..########..",
+            "..#......#..",
+            "..#..##..#..",
+            "..#..##..#..",
+            "..#......#..",
+            "..########..",
+            "............",
+            "............",
+            "............",
+        ],
+        "debug" => &[
+            "............",
+            "..######....",
+            ".#..##..#...",
+            ".#.####.#...",
+            ".#.####.#...",
+            ".#..##..#...",
+            "..######....",
+            "....##......",
+            "............",
+            "............",
+            "............",
+            "............",
+        ],
+        _ => return None,
+    })
 }
 
 /// Whether the profile shows a stock button in this mode (None: the game decides).
