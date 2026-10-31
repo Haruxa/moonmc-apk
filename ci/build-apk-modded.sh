@@ -146,6 +146,8 @@ fi
   echo "ref:      ${GITHUB_REF_NAME:-local} (${GITHUB_SHA:-?})"
   echo "profile:  $PROFILE"
   echo "mods:     $MODS"
+  echo "pin:      ${ENGINE_PIN:-?}"
+  echo "engine:   ${ENGINE_LABEL:-?}"
   echo "rustc:    $(rustc -V 2>/dev/null || echo '?')"
   echo "size:     $(stat -c%s "$CIOUT/horizon.apk") bytes"
   echo "sha256:   $(sha256sum "$CIOUT/horizon.apk" | cut -d' ' -f1)"
