@@ -246,6 +246,7 @@ jobs:
           fetch patch-branding.py
           fetch patch-package.py
           fetch touch_layout.rs
+          fetch touch_menu.rs
           # все бандлы .hnmod: какие собирать, выбирает лаунчер (input native_mods)
           mkdir -p src/ci/bundles
           gh api "repos/${{ github.repository }}/git/trees/${{ github.sha }}?recursive=1" \
@@ -415,7 +416,7 @@ jobs:
             --workspace src --mods mods.incoming/mixins --out src-out
           cp /tmp/android.rs.bak "src-out/$ANDROID"
           # Профили экранного управления: раскладка кнопок из JSON (touch/profiles/*.json).
-          ( cd src-out && python3 ../src/ci/patch-touch.py ../src/ci/touch_layout.rs )
+          ( cd src-out && python3 ../src/ci/patch-touch.py ../src/ci/touch_layout.rs ../src/ci/touch_menu.rs )
           grep -n 'mod touch_layout' "src-out/crates/horizon-client/src/game.rs" | head -2 || true
           cp -a src/.local src-out/.local
           echo "== вшитые файлы: $(ls src-out/crates/horizon-client/src/game/ | grep -c official || true)"
