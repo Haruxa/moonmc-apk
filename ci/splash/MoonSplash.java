@@ -17,14 +17,13 @@ import android.view.WindowManager;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Random;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * MoonMC: экран первой загрузки в духе Material 3 Expressive — знак проекта, текущий шаг
- * подготовки и полоса прогресса, на фоне падают звёзды.
+ * подготовки и загрузка фигурами (морфящиеся круги-квадраты), на фоне падают звёзды.
  *
  * Отдельное окно (Dialog), потому что поверх нативной поверхности (NativeActivity) обычные
  * view не видны: SurfaceView рисуется под окном. Диалог лежит выше и всегда на экране.
@@ -85,8 +84,8 @@ final class MoonSplash extends Dialog {
         private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Path mark = new Path();
         private final Path cut = new Path();
-        private final Path wave = new Path();
         private final RectF box = new RectF();
+        private final RectF ring = new RectF();
         private final float[] starX = new float[STARS];
         private final float[] starY = new float[STARS];
         private final float[] starR = new float[STARS];
@@ -98,7 +97,7 @@ final class MoonSplash extends Dialog {
 
         private String step = "";
         private float percent = -1f;
-        private final List<String> wrapped = new ArrayList<>();
+        private final List<String> lines = new ArrayList<>();
 
         Splash(Context context) {
             super(context);
@@ -132,17 +131,17 @@ final class MoonSplash extends Dialog {
             if (m.find()) {
                 percent = Math.min(100, Integer.parseInt(m.group(1))) / 100f;
             }
-            wrapped.clear();
+            lines.clear();
             invalidate();
         }
 
         /** Все строки текста по ширине (без обрезки). */
         private void wrap(String source, float maxWidth) {
-            wrapped.clear();
+            lines.clear();
             for (String paragraph : source.split("\n")) {
                 String rest = paragraph.trim();
                 if (rest.isEmpty()) {
-                    wrapped.add("");
+                    lines.add("");
                     continue;
                 }
                 while (!rest.isEmpty()) {
@@ -153,7 +152,7 @@ final class MoonSplash extends Dialog {
                         int space = rest.lastIndexOf(' ', end);
                         if (space > 0) end = space;
                     }
-                    wrapped.add(rest.substring(0, end).trim());
+                    lines.add(rest.substring(0, end).trim());
                     rest = rest.substring(Math.min(end, rest.length())).trim();
                 }
             }
@@ -161,14 +160,14 @@ final class MoonSplash extends Dialog {
 
         /** Обрезает последнюю строку многоточием, если текст не влез. */
         private void ellipsize(float maxWidth, int maxLines) {
-            if (wrapped.size() <= maxLines) return;
-            while (wrapped.size() > maxLines) wrapped.remove(wrapped.size() - 1);
-            if (wrapped.isEmpty()) return;
-            String last = wrapped.get(maxLines - 1);
+            if (lines.size() <= maxLines) return;
+            while (lines.size() > maxLines) lines.remove(lines.size() - 1);
+            if (lines.isEmpty()) return;
+            String last = lines.get(maxLines - 1);
             while (!last.isEmpty() && text.measureText(last + "…") > maxWidth) {
                 last = last.substring(0, last.length() - 1);
             }
-            wrapped.set(maxLines - 1, last + "…");
+            lines.set(maxLines - 1, last + "…");
         }
 
         @Override
@@ -182,30 +181,33 @@ final class MoonSplash extends Dialog {
             float unit = Math.min(w, h);
             float cx = w / 2f;
 
-            drawBackground(canvas, w, h, unit, seconds);
+            drawBackground(canvas, w, h, unit);
             drawStars(canvas, w, h, seconds);
 
-            float logoY = h * 0.33f;
-            float radius = unit * 0.070f;
+            float logoY = h * 0.295f;
+            float radius = unit * 0.060f;
             drawLogo(canvas, cx, logoY, radius, seconds);
-            drawTitle(canvas, cx, logoY + radius * 3.3f, unit);
-            float barY = h * 0.60f;
-            drawProgress(canvas, cx, barY, w, unit, seconds);
-            drawStep(canvas, cx, barY + unit * 0.042f, h - unit * 0.050f, w, unit);
+
+            float titleBaseline = logoY + radius * 3.15f;
+            drawTitle(canvas, cx, titleBaseline, unit);
+
+            float loaderY = Math.max(titleBaseline + unit * 0.105f, h * 0.545f);
+            drawLoader(canvas, cx, loaderY, unit, seconds);
+            drawStep(canvas, cx, loaderY + unit * 0.048f, h - unit * 0.075f, w, unit);
             drawFooter(canvas, cx, h, unit);
 
             postInvalidateOnAnimation();
         }
 
         /** Фон: глубокая зелень в чёрное, плюс сияние за знаком. */
-        private void drawBackground(Canvas canvas, int w, int h, float unit, float seconds) {
+        private void drawBackground(Canvas canvas, int w, int h, float unit) {
             paint.setShader(new LinearGradient(0, 0, 0, h, 0xFF0A1612, 0xFF04070A,
                 Shader.TileMode.CLAMP));
             canvas.drawRect(0, 0, w, h, paint);
-            paint.setShader(new RadialGradient(w / 2f, h * 0.33f, unit * 0.62f,
+            paint.setShader(new RadialGradient(w / 2f, h * 0.30f, unit * 0.60f,
                 new int[] { 0x3363F2B8, 0x1422C08C, 0x00000000 },
                 new float[] { 0f, 0.5f, 1f }, Shader.TileMode.CLAMP));
-            canvas.drawCircle(w / 2f, h * 0.33f, unit * 0.62f, paint);
+            canvas.drawCircle(w / 2f, h * 0.30f, unit * 0.60f, paint);
             paint.setShader(null);
         }
 
@@ -226,7 +228,7 @@ final class MoonSplash extends Dialog {
                 paint.setColor((a << 24) | 0xCFEFE4);
                 canvas.drawCircle(x, y, r, paint);
                 // шлейф: короткая полоска над звездой
-                stroke.setColor((a / 3) << 24 | 0x9BE8BE);
+                stroke.setColor(((a / 3) << 24) | 0x9BE8BE);
                 stroke.setStrokeWidth(r * 0.9f);
                 canvas.drawLine(x, y - r * 5.5f, x, y - r, stroke);
             }
@@ -269,67 +271,62 @@ final class MoonSplash extends Dialog {
             text.setTextAlign(Paint.Align.CENTER);
             text.setColor(PAPER);
             text.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-            text.setTextSize(unit * 0.070f);
+            text.setTextSize(unit * 0.062f);
             text.setLetterSpacing(0.01f);
             canvas.drawText("MoonMC", cx, baseline, text);
 
             text.setColor(DIM);
             text.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-            text.setTextSize(unit * 0.021f);
+            text.setTextSize(unit * 0.019f);
             text.setLetterSpacing(0.30f);
-            canvas.drawText("MINECRAFT  BEDROCK  EDITION", cx, baseline + unit * 0.045f, text);
+            canvas.drawText("MINECRAFT  BEDROCK  EDITION", cx, baseline + unit * 0.042f, text);
             text.setLetterSpacing(0f);
         }
 
-        /** Волнистая полоса прогресса в духе M3 Expressive. */
-        private void drawProgress(Canvas canvas, float cx, float y, float w, float unit,
-                                  float seconds) {
-            float width = Math.min(w * 0.52f, unit * 0.62f);
-            float left = cx - width / 2f;
-            float amplitude = unit * 0.008f;
-            int steps = 48;
-
-            // дорожка
-            wave.reset();
-            for (int i = 0; i <= steps; i++) {
-                float px = left + width * i / steps;
-                float py = y + (float) Math.sin(i * 0.42f + seconds * 1.2f) * amplitude;
-                if (i == 0) wave.moveTo(px, py); else wave.lineTo(px, py);
-            }
-            stroke.setColor(0x24FFFFFF);
-            stroke.setStrokeWidth(unit * 0.0075f);
-            canvas.drawPath(wave, stroke);
-
-            float done = percent >= 0f ? percent : (0.35f + 0.35f * (float) Math.sin(seconds * 0.9f));
-            int last = Math.max(1, (int) (steps * Math.max(0.04f, Math.min(1f, done))));
-            wave.reset();
-            for (int i = 0; i <= last; i++) {
-                float px = left + width * i / steps;
-                float py = y + (float) Math.sin(i * 0.42f + seconds * 1.2f) * amplitude;
-                if (i == 0) wave.moveTo(px, py); else wave.lineTo(px, py);
-            }
-            stroke.setColor(MINT);
-            stroke.setStrokeWidth(unit * 0.0075f);
-            canvas.drawPath(wave, stroke);
-            // точка на конце полосы
-            float endX = left + width * last / steps;
-            float endY = y + (float) Math.sin(last * 0.42f + seconds * 1.2f) * amplitude;
-            paint.setColor(MINT);
-            canvas.drawCircle(endX, endY, unit * 0.0085f, paint);
-
+        /**
+         * Загрузка фигурами: три морфящиеся фигуры (круг ↔ скруглённый квадрат) «дышат»
+         * со сдвигом по фазе. Если шаг сообщает процент — вместо них кольцо с числом.
+         */
+        private void drawLoader(Canvas canvas, float cx, float y, float unit, float seconds) {
             if (percent >= 0f) {
-                text.setTextAlign(Paint.Align.RIGHT);
-                text.setColor(MINT);
+                float radius = unit * 0.026f;
+                ring.set(cx - radius, y - radius, cx + radius, y + radius);
+                stroke.setStrokeWidth(unit * 0.0075f);
+                stroke.setColor(0x24FFFFFF);
+                canvas.drawCircle(cx, y, radius, stroke);
+                stroke.setColor(MINT);
+                canvas.drawArc(ring, -90f, 360f * percent, false, stroke);
+                text.setTextAlign(Paint.Align.CENTER);
                 text.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-                text.setTextSize(unit * 0.022f);
-                canvas.drawText(String.format(Locale.US, "%d%%", Math.round(percent * 100f)),
-                    left + width, y - unit * 0.022f, text);
+                text.setTextSize(unit * 0.020f);
+                text.setColor(MINT);
+                canvas.drawText(Math.round(percent * 100f) + "%", cx, y + unit * 0.007f, text);
+                return;
+            }
+
+            float size = unit * 0.026f;
+            float gap = size * 2.25f;
+            int count = 3;
+            float left = cx - gap * (count - 1) / 2f;
+            for (int i = 0; i < count; i++) {
+                float phase = seconds * 1.55f - i * 0.62f;
+                float morph = 0.5f + 0.5f * (float) Math.sin(phase);       // 1 = круг, 0 = квадрат
+                float breath = 0.80f + 0.24f * (float) Math.cos(phase * 0.85f);
+                float lift = (float) Math.sin(phase * 0.9f) * size * 0.30f;
+                float half = size * breath * 0.5f;
+                float px = left + i * gap;
+                float py = y - Math.abs(lift);
+                box.set(px - half, py - half, px + half, py + half);
+                float corner = half * (0.14f + 0.86f * morph);
+                int alpha = 120 + (int) (115 * (0.5f + 0.5f * (float) Math.sin(phase)));
+                paint.setColor((Math.min(255, alpha) << 24) | 0x9BE8BE);
+                canvas.drawRoundRect(box, corner, corner, paint);
             }
         }
 
         /**
          * Текущий шаг: переносится по словам, а размер шрифта подбирается так, чтобы текст
-         * влез целиком между полосой и низом экрана. Совсем не влезает — многоточие.
+         * влез целиком между фигурами загрузки и низом экрана. Не влезает — многоточие.
          */
         private void drawStep(Canvas canvas, float cx, float top, float bottom, float w,
                               float unit) {
@@ -340,15 +337,15 @@ final class MoonSplash extends Dialog {
             text.setColor(0xFFB7C7CD);
             String message = step.isEmpty() ? "Preparing the game…" : step;
 
-            float[] scale = { 0.0245f, 0.0230f, 0.0215f, 0.0200f, 0.0185f, 0.0170f, 0.0155f };
-            float size = scale[0];
+            float[] scale = { 0.0230f, 0.0215f, 0.0200f, 0.0185f, 0.0170f, 0.0155f, 0.0140f };
+            float size = scale[scale.length - 1];
             float lineHeight = size * unit * 1.42f;
             boolean fits = false;
             for (float candidate : scale) {
                 text.setTextSize(candidate * unit);
                 wrap(message, maxWidth);
                 lineHeight = candidate * unit * 1.42f;
-                if (wrapped.size() * lineHeight <= region) {
+                if (lines.size() * lineHeight <= region) {
                     size = candidate;
                     fits = true;
                     break;
@@ -362,10 +359,10 @@ final class MoonSplash extends Dialog {
                 int room = Math.max(1, (int) (region / lineHeight));
                 ellipsize(maxWidth, room);
             }
-            float total = wrapped.size() * lineHeight;
+            float total = lines.size() * lineHeight;
             float startY = top + Math.max(0f, (region - total) / 2f);
-            for (int i = 0; i < wrapped.size(); i++) {
-                canvas.drawText(wrapped.get(i), cx,
+            for (int i = 0; i < lines.size(); i++) {
+                canvas.drawText(lines.get(i), cx,
                     startY + lineHeight * i + lineHeight * 0.72f, text);
             }
         }
@@ -375,10 +372,10 @@ final class MoonSplash extends Dialog {
             text.setTextAlign(Paint.Align.CENTER);
             text.setColor(0x5CFFFFFF);
             text.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-            text.setTextSize(unit * 0.019f);
+            text.setTextSize(unit * 0.018f);
             text.setLetterSpacing(0.14f);
             canvas.drawText(version.isEmpty() ? "MoonMC" : "MoonMC  " + version,
-                cx, h - unit * 0.040f, text);
+                cx, h - unit * 0.052f, text);
             text.setLetterSpacing(0f);
         }
     }
