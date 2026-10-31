@@ -146,28 +146,42 @@ EDITS = [
 ]
 
 
-def patch_android_features() -> None:
-    """Порт просит фичу `horizon-client/mods`, а в новых пинах моды собраны всегда.
-
-    Если у horizon-client больше нет фичи `mods`, её имя в фиче порта убираем:
-    остаётся `horizon-mods/runtime` — она и включает wasm-рантайм модов.
-    """
-    engine = pathlib.Path("crates/horizon-client/Cargo.toml")
-    port = pathlib.Path("crates/horizon-android/Cargo.toml")
-    if not engine.is_file() or not port.is_file():
-        return
-    text = engine.read_text()
+def features_of(path: pathlib.Path) -> set:
+    """Имена фич из секции [features] манифеста."""
+    if not path.is_file():
+        return set()
+    text = path.read_text()
     if "[features]" not in text:
+        return set()
+    block = text.split("[features]", 1)[1].split("\n[", 1)[0]
+    return {m.group(1) for m in re.finditer(r"(?m)^([A-Za-z0-9_-]+)\s*=", block)}
+
+
+def patch_android_features() -> None:
+    """Фича `mods` порта под этот пин движка.
+
+    В старых пинах моды включались фичами `horizon-client/mods` + `horizon-mods/runtime`,
+    в новых они собраны всегда (ни той, ни другой фичи нет). Собираем строку из того,
+    что реально есть в манифестах этого пина, — и порт собирается на обоих.
+    """
+    port = pathlib.Path("crates/horizon-android/Cargo.toml")
+    if not port.is_file():
         return
-    block = text.split("[features]", 1)[1]
-    block = block.split("\n[", 1)[0]
-    if re.search(r"(?m)^mods\s*=", block):
-        return  # у этого пина фича ещё есть — порт как есть
-    port_text = port.read_text()
-    old = 'mods = ["horizon-client/mods", "horizon-mods/runtime"]'
-    if old in port_text:
-        port.write_text(port_text.replace(old, 'mods = ["horizon-mods/runtime"]', 1))
-        print("Cargo.toml: у пина нет фичи horizon-client/mods — оставил horizon-mods/runtime")
+    parts = []
+    if "mods" in features_of(pathlib.Path("crates/horizon-client/Cargo.toml")):
+        parts.append("horizon-client/mods")
+    if "runtime" in features_of(pathlib.Path("crates/horizon-mods/Cargo.toml")):
+        parts.append("horizon-mods/runtime")
+    line = "mods = [" + ", ".join(f'"{p}"' for p in parts) + "]"
+    text = port.read_text()
+    current = re.search(r"(?m)^mods\s*=\s*\[[^\]]*\]", text)
+    if current is None:
+        print("::warning::в порте нет фичи mods — пропускаю")
+        return
+    if current.group(0) == line:
+        return
+    port.write_text(text.replace(current.group(0), line, 1))
+    print(f"фичи порта: {current.group(0)} -> {line}")
 
 
 # Ребрендинг: старые пути и подписи «MargyMC» -> «MoonMC» (в том числе /sdcard/MoonMC/minecraft).
