@@ -416,7 +416,7 @@ jobs:
           cp /tmp/android.rs.bak "src-out/$ANDROID"
           # Профили экранного управления: раскладка кнопок из JSON (touch/profiles/*.json).
           ( cd src-out && python3 ../src/ci/patch-touch.py ../src/ci/touch_layout.rs )
-          grep -n 'mod touch_layout' "src-out/$GAME" | head -2
+          grep -n 'mod touch_layout' "src-out/crates/horizon-client/src/game.rs" | head -2 || true
           cp -a src/.local src-out/.local
           echo "== вшитые файлы: $(ls src-out/crates/horizon-client/src/game/ | grep -c official || true)"
           rm -rf src && mv src-out src
