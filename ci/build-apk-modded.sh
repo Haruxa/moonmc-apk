@@ -52,7 +52,13 @@ FEATURES=()
 if [ "$MODS" = 1 ]; then FEATURES=(--features mods); fi
 
 echo "== cargo build${FEATURES[*]:+ ${FEATURES[*]}}"
-cargo build --locked --profile "$PROFILE" --target aarch64-linux-android -p horizon-android ${FEATURES[@]+"${FEATURES[@]}"}
+# --locked держим, пока дерево совпадает с Cargo.lock. Порт и миксины могут менять
+# состав зависимостей (в новых пинах фичи модов переезжали) — тогда один раз
+# разрешаем cargo обновить лок и предупреждаем об этом в логе.
+if ! cargo build --locked --profile "$PROFILE" --target aarch64-linux-android -p horizon-android ${FEATURES[@]+"${FEATURES[@]}"}; then
+  echo "::warning::Cargo.lock не совпал с деревом этого пина — собираю без --locked"
+  cargo build --profile "$PROFILE" --target aarch64-linux-android -p horizon-android ${FEATURES[@]+"${FEATURES[@]}"}
+fi
 SO=target/aarch64-linux-android/$PROFILE/libhorizon.so
 
 rm -rf "$OUT/stage" "$OUT/res.zip" "$OUT/assets" && mkdir -p "$OUT/stage/lib/arm64-v8a"
