@@ -2,6 +2,8 @@ package cat.narezany.horizon;
 
 import android.app.Dialog;
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
@@ -94,6 +96,7 @@ final class MoonSplash extends Dialog {
         private final float[] starDrift = new float[STARS];
         private final long started = SystemClock.uptimeMillis();
         private final String version;
+        private final Bitmap logo;
 
         private String step = "";
         private float percent = -1f;
@@ -122,6 +125,18 @@ final class MoonSplash extends Dialog {
                 // без версии — просто имя
             }
             version = name == null ? "" : name;
+            // Пиксельная луна из папки «иконки» (ci/branding/drawable-nodpi/moonmc_logo.png)
+            Bitmap bitmap = null;
+            try {
+                int id = context.getResources().getIdentifier(
+                    "moonmc_logo", "drawable", context.getPackageName());
+                if (id != 0) {
+                    bitmap = BitmapFactory.decodeResource(context.getResources(), id);
+                }
+            } catch (RuntimeException | OutOfMemoryError e) {
+                // без картинки нарисуем месяц кодом
+            }
+            logo = bitmap;
         }
 
         void step(String value) {
@@ -185,7 +200,7 @@ final class MoonSplash extends Dialog {
             drawStars(canvas, w, h, seconds);
 
             float logoY = h * 0.295f;
-            float radius = unit * 0.060f;
+            float radius = unit * 0.055f;
             drawLogo(canvas, cx, logoY, radius, seconds);
 
             float titleBaseline = logoY + radius * 3.15f;
@@ -234,7 +249,7 @@ final class MoonSplash extends Dialog {
             }
         }
 
-        /** Знак проекта: мятная фигура «cookie ↔ circle» и месяц, меняющий фазу. */
+        /** Знак проекта: тёмная фигура «cookie ↔ circle» и пиксельная луна внутри. */
         private void drawLogo(Canvas canvas, float cx, float cy, float r, float seconds) {
             // появление с пружинкой (ease-out-back)
             float t = Math.min(1f, seconds / 0.65f);
@@ -244,15 +259,31 @@ final class MoonSplash extends Dialog {
 
             // морфинг формы: круг → скруглённый квадрат → круг (M3 Expressive shape morph)
             float morph = 0.5f + 0.5f * (float) Math.sin(seconds * 1.05f);
-            float container = r * 1.62f * appear;
+            float container = r * 1.72f * appear;
             box.set(cx - container, cy - container, cx + container, cy + container);
-            float corner = container * (0.16f + 0.84f * (1f - morph));
+            float corner = container * (0.18f + 0.82f * (1f - morph));
             paint.setShader(new LinearGradient(box.left, box.top, box.right, box.bottom,
-                MINT_SOFT, MINT, Shader.TileMode.CLAMP));
+                0xFF16362B, 0xFF0A1512, Shader.TileMode.CLAMP));
             canvas.drawRoundRect(box, corner, corner, paint);
             paint.setShader(null);
+            // мягкая мятная обводка фигуры
+            stroke.setColor(0x3F9BE8BE);
+            stroke.setStrokeWidth(Math.max(1f, r * 0.06f));
+            canvas.drawRoundRect(box, corner, corner, stroke);
 
-            // месяц: круг минус смещённый круг, смещение медленно вращается (фаза луны)
+            if (logo != null) {
+                // пиксель-арт: без сглаживания, с лёгким покачиванием и дыханием
+                float breathe = 1f + 0.025f * (float) Math.sin(seconds * 1.7f);
+                float side = container * 1.24f * breathe;
+                float bob = (float) Math.sin(seconds * 1.15f) * r * 0.05f;
+                box.set(cx - side / 2f, cy - side / 2f + bob,
+                    cx + side / 2f, cy + side / 2f + bob);
+                paint.setFilterBitmap(false);
+                canvas.drawBitmap(logo, null, box, paint);
+                return;
+            }
+
+            // запасной вариант: месяц кодом — круг минус смещённый круг
             float phase = seconds * 0.45f;
             float offset = r * 0.44f;
             float dx = (float) Math.cos(phase) * offset;
@@ -262,7 +293,7 @@ final class MoonSplash extends Dialog {
             cut.reset();
             cut.addCircle(cx + dx, cy + dy - r * 0.10f, r * 0.86f, Path.Direction.CW);
             mark.op(cut, Path.Op.DIFFERENCE);
-            paint.setColor(INK);
+            paint.setColor(MINT);
             canvas.drawPath(mark, paint);
         }
 
