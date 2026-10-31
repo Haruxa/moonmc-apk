@@ -291,6 +291,34 @@ jobs:
         working-directory: src
         run: python3 ci/patch-package.py
 
+      # Подпись движка: любой пин переводится в Nightly через вечные теги
+      # nightly-source/<дата>-<короткий sha>. Пишем её в ресурсы APK (экран загрузки)
+      # и в build-info.txt, чтобы по готовому APK было видно, на чём он собран.
+      - name: "Движок: подпись Nightly"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PIN="${{ inputs.native_pin }}"
+          if [ -z "$PIN" ]; then
+            SHORT=""; LABEL="upstream main"
+          else
+            SHORT=$(printf '%s' "$PIN" | cut -c1-7)
+            TAG=$(gh api "repos/horizon-rust/horizon/git/matching-refs/tags/nightly-source" \
+                    --jq "[.[].ref | sub(\"refs/tags/nightly-source/\"; \"\")] | map(select(endswith(\"-$SHORT\"))) | .[0] // \"\"" || true)
+            if [ -n "$TAG" ]; then LABEL="Nightly ${TAG%-*}"; else LABEL="commit $SHORT"; fi
+          fi
+          echo "ENGINE_PIN=$PIN" >> "$GITHUB_ENV"
+          echo "ENGINE_LABEL=$LABEL" >> "$GITHUB_ENV"
+          mkdir -p src/android/res/values
+          cat > src/android/res/values/engine.xml <<XML
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <!-- MoonMC: на каком движке собрано (см. ci/build-apk-modded.sh) -->
+              <string name="moonmc_engine">$LABEL</string>
+          </resources>
+          XML
+          echo "движок: $LABEL (пин ${SHORT:-нет})"
+
       - name: Rust + цель aarch64-linux-android
         run: |
           curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
