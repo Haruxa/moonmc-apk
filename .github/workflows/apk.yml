@@ -216,6 +216,7 @@ jobs:
           fetch patch-game-home.py
           fetch patch-touch.py
           fetch patch-branding.py
+          fetch patch-package.py
           fetch touch_layout.rs
           # все бандлы .hnmod: какие собирать, выбирает лаунчер (input native_mods)
           mkdir -p src/ci/bundles
@@ -257,6 +258,10 @@ jobs:
       - name: "Патч: имя и иконка MoonMC (Material You)"
         working-directory: src
         run: python3 ci/patch-branding.py
+
+      - name: "Патч: пакет приложения dev.moonmc.moonmc"
+        working-directory: src
+        run: python3 ci/patch-package.py
 
       - name: Rust + цель aarch64-linux-android
         run: |
