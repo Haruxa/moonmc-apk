@@ -21,11 +21,17 @@ GAME = CLIENT / "game.rs"
 MODULE = CLIENT / "game/touch_layout.rs"
 
 
+ERRORS: list[str] = []
+
+
 def replace(text: str, old: str, new: str, what: str) -> str:
+    # Не выходим на первом промахе: за один прогон CI видно все несовпадения.
     if old not in text:
-        sys.exit(f"patch-touch: не найден якорь ({what})")
+        ERRORS.append(f"{what}: не найден якорь")
+        return text
     if text.count(old) > 1:
-        sys.exit(f"patch-touch: якорь не уникален ({what})")
+        ERRORS.append(f"{what}: якорь не уникален ({text.count(old)})")
+        return text
     return text.replace(old, new, 1)
 
 
@@ -40,7 +46,8 @@ def main() -> None:
         None,
     )
     if anchor is None:
-        sys.exit("patch-touch: в game.rs нет `mod touch;`")
+        ERRORS.append("game.rs: нет `mod touch;`")
+        anchor = ""
     if "mod touch_layout;" not in mod:
         indent = anchor[: len(anchor) - len(anchor.lstrip())]
         visibility = anchor.strip().split("mod ")[0]
@@ -212,6 +219,8 @@ def main() -> None:
     )
 
     TOUCH.write_text(text)
+    if ERRORS:
+        sys.exit("patch-touch: движок не совпал с якорями — " + "; ".join(ERRORS))
     print("patch-touch: профили управления вшиты")
 
 
