@@ -227,6 +227,66 @@ pub(super) fn label(id: &str) -> Option<String> {
     Some(entry.label.clone())
 }
 
+/// The Bedrock-style layout the overlay's BEDROCK button installs.
+const BEDROCK: &str = r#"{
+  "schema": 1,
+  "name": "Bedrock",
+  "controls": [
+    {"id": "jump", "label": "Jump", "x": 0.77, "y": 0.63, "r": 21, "icon": "jump"},
+    {"id": "sneak", "label": "Sneak", "x": 0.77, "y": 0.76, "r": 14, "icon": "sneak"},
+    {"id": "sprint", "label": "Run", "x": 0.67, "y": 0.41, "r": 14, "icon": "sprint"},
+    {"id": "attack", "label": "Hit", "x": 0.67, "y": 0.55, "r": 20, "modes": ["aim"], "icon": "attack"},
+    {"id": "inventory", "label": "...", "x": 0.375, "y": 0.05, "r": 10, "icon": "inventory"},
+    {"id": "chat", "label": "Chat", "x": 0.425, "y": 0.05, "r": 10, "icon": "chat"},
+    {"id": "pause", "label": "II", "x": 0.475, "y": 0.05, "r": 10, "icon": "pause"}
+  ]
+}"#;
+
+/// Writes the Bedrock layout into the folder and switches to it.
+pub(super) fn write_bedrock() {
+    let _ = std::fs::create_dir_all(DIR);
+    let path = Path::new(DIR).join("bedrock.json");
+    if let Err(e) = std::fs::write(&path, BEDROCK) {
+        log::warn!("Horizon: bedrock profile not written: {e}");
+        return;
+    }
+    activate("bedrock");
+}
+
+/// Re-reads the active profile (after the overlay switched it).
+pub(super) fn reload() {
+    if let Ok(mut slot) = SLOT.get_or_init(|| Mutex::new(None)).lock() {
+        *slot = None;
+    }
+    ensure_loaded();
+}
+
+/// Makes `name` the profile in use: writes `touch/active.txt` and reloads it.
+pub(super) fn activate(name: &str) {
+    if let Err(e) = std::fs::write(ACTIVE, name) {
+        log::warn!("Horizon: touch profile not saved: {e}");
+        return;
+    }
+    reload();
+    log::info!("Horizon: touch profile {name}");
+}
+
+/// The profiles in the folder, by name (file stem), sorted.
+pub(super) fn names() -> Vec<String> {
+    profiles()
+        .iter()
+        .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
+        .collect()
+}
+
+/// The name of the profile in use.
+pub(super) fn active() -> String {
+    let files = profiles();
+    active_path(&files)
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
+        .unwrap_or_default()
+}
+
 /// A stock button's icon from the profile (None: draw the label).
 pub(super) fn icon(id: &str) -> Option<String> {
     let slot = slot();
