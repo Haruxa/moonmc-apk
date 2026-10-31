@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MargyMC-CI v2: папка игры на /sdcard, но JRE и tmp — в приватном хранилище.
+"""MoonMC-CI v2: папка игры на /sdcard, но JRE и tmp — в приватном хранилище.
 
 Зачем папка игры на /sdcard: в stock MargyMC «папка игры» —
 `app.internal_data_path()` (/data/data/cat.narezany.horizon/files), куда файловый
@@ -10,7 +10,7 @@
 `jre/legal/java.scripting/ASSEMBLY_EXCEPTION`.
 
 Правки:
-1. crates/horizon-client/src/android.rs   — home → /sdcard/MargyMC/horizon
+1. crates/horizon-client/src/android.rs   — home → /sdcard/MoonMC/horizon
    (с проверкой записи; нет доступа — прежний приватный путь) + переменная
    окружения HORIZON_PRIVATE_HOME с приватной папкой.
 2. crates/horizon-client/src/android_setup.rs — `jre` и `cache` берутся из
@@ -32,7 +32,7 @@ EDITS = [
         .unwrap_or_else(|| std::path::PathBuf::from("/data/local/tmp/horizon"));
     let _ = std::fs::create_dir_all(&home);
 """,
-        """    // MargyMC-CI v2: папка игры на внешнем носителе, чтобы моды, миры и настройки
+        """    // MoonMC-CI v2: папка игры на внешнем носителе, чтобы моды, миры и настройки
     // были видны файловому менеджеру и попадали в бэкап. Нет доступа к /sdcard —
     // возвращаемся к приватной папке приложения, как в stock-сборке.
     let private = app
@@ -45,7 +45,7 @@ EDITS = [
     // folder because /sdcard is FUSE, which has no symlinks, and OpenJDK's legal/
     // folder is made of them.
     unsafe { std::env::set_var("HORIZON_PRIVATE_HOME", private.as_os_str()) };
-    let external = std::path::PathBuf::from("/sdcard/MargyMC/horizon");
+    let external = std::path::PathBuf::from("/sdcard/MoonMC/horizon");
     let external_usable = std::fs::create_dir_all(&external).is_ok() && {
         let probe = external.join(".horizon-write-probe");
         let ok = std::fs::write(&probe, b"probe").is_ok();
@@ -60,7 +60,7 @@ EDITS = [
         pathlib.Path("crates/horizon-client/src/android_setup.rs"),
         """    let jre = home.join("jre");
 """,
-        """    // MargyMC-CI v2: the JRE lives on the private storage: /sdcard is FUSE, which has
+        """    // MoonMC-CI v2: the JRE lives on the private storage: /sdcard is FUSE, which has
     // no symlinks, and OpenJDK's legal/ folder is made of them.
     let jre = std::env::var_os("HORIZON_PRIVATE_HOME")
         .map(|dir| std::path::PathBuf::from(dir).join("jre"))
@@ -71,7 +71,7 @@ EDITS = [
         pathlib.Path("crates/horizon-client/src/android_setup.rs"),
         """    let cache = home.join("tmp");
 """,
-        """    // MargyMC-CI v2: Java's temporary files, on the private storage with the JRE.
+        """    // MoonMC-CI v2: Java's temporary files, on the private storage with the JRE.
     let cache = std::env::var_os("HORIZON_PRIVATE_HOME")
         .map(|dir| std::path::PathBuf::from(dir).join("tmp"))
         .unwrap_or_else(|| home.join("tmp"));
@@ -82,13 +82,13 @@ EDITS = [
         """        file.try_lock()
             .map_err(|_| format!("{} is already open in another instance", world.display()))?;
 """,
-        """        // MargyMC-CI v4: /sdcard is FUSE, which implements no file locks (flock gives
+        """        // MoonMC-CI v4: /sdcard is FUSE, which implements no file locks (flock gives
         // ENOSYS). Only a real would-block is another instance; a filesystem without
         // locks must not turn every world into "already open".
         match file.try_lock() {
             Ok(()) => {}
             Err(std::fs::TryLockError::WouldBlock) => {
-                // MargyMC-CI v4: FUSE reports would-block for worlds that no other
+                // MoonMC-CI v4: FUSE reports would-block for worlds that no other
                 // instance holds (stale/unreliable locks). Hard-failing here cost us
                 // real crashes, so warn and keep going; the Android app is
                 // single-activity, so a genuine second writer is not a real scenario.
@@ -114,7 +114,7 @@ EDITS = [
         """    match lock.try_lock() {
         Ok(()) => {}
         Err(fs::TryLockError::WouldBlock) => return Ok(None),
-        // MargyMC-CI v3: FUSE (/sdcard) has no flock, so take an unlocked log file
+        // MoonMC-CI v3: FUSE (/sdcard) has no flock, so take an unlocked log file
         // rather than never writing latest.log at all.
         Err(fs::TryLockError::Error(e)) => {
             eprintln!("logging: file lock unavailable ({e}); writing latest.log unlocked");
@@ -143,7 +143,7 @@ def main() -> int:
     if failed:
         return 1
     print(
-        "MargyMC-CI v4: папка игры /sdcard/MargyMC/horizon, JRE и tmp — в приватном хранилище,"
+        "MoonMC-CI v4: папка игры /sdcard/MoonMC/horizon, JRE и tmp — в приватном хранилище,"
         " файловые локи FUSE (flock) не считаются занятостью мира и не глушат latest.log"
     )
     return 0
