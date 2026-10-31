@@ -145,6 +145,26 @@ def main() -> None:
         "world_role",
     )
 
+    # 7c. Диагностика ввода: видно в logs/latest.log, что игра получила касание.
+    text = replace(
+        text,
+        "        let inventory = matches!(self.screen, Screen::Inventory | Screen::Creative);",
+        """        let inventory = matches!(self.screen, Screen::Inventory | Screen::Creative);
+        log::info!(
+            "touch: {:?} at ({:.0}, {:.0}) gui {}x{} scale {:.2} menu={} playing={} title={}",
+            t.phase,
+            at.0,
+            at.1,
+            batch.width,
+            batch.height,
+            batch.scale,
+            self.touch_in_menu(),
+            self.screen == Screen::Playing,
+            self.title.is_some()
+        );""",
+        "touch диагностика",
+    )
+
     # 8. Кнопка: иконка из профиля (пиксельная, рисуется кодом) или подпись.
     text = replace(
         text,
