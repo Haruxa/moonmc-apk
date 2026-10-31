@@ -125,6 +125,15 @@ EDITS = [
 ]
 
 
+# Ребрендинг: старые пути и подписи «MargyMC» -> «MoonMC» (в том числе /sdcard/MoonMC/minecraft).
+REBRAND = [
+    pathlib.Path("crates/horizon-client/src/android_setup.rs"),
+    pathlib.Path("crates/horizon-client/src/android.rs"),
+    pathlib.Path("crates/horizon-client/src/title.rs"),
+    pathlib.Path("android/AndroidManifest.xml"),
+]
+
+
 def main() -> int:
     failed = False
     for path, original, patched in EDITS:
@@ -140,6 +149,24 @@ def main() -> int:
             continue
         path.write_text(text.replace(original, patched, 1))
         print(f"{path}: пропатчен")
+    # 3. Имя проекта: из него же складывается путь /sdcard/MoonMC/minecraft
+    renamed = 0
+    for path in REBRAND:
+        if not path.is_file():
+            continue
+        text = path.read_text()
+        count = text.count("MargyMC")
+        if count:
+            path.write_text(text.replace("MargyMC", "MoonMC"))
+            renamed += count
+            print(f"{path}: {count} упоминаний MargyMC -> MoonMC")
+    left = [str(p) for p in REBRAND if p.is_file() and "MargyMC" in p.read_text()]
+    if left:
+        print(f"::error::остались упоминания MargyMC: {left}", file=sys.stderr)
+        failed = True
+    else:
+        print(f"ребрендинг: заменено {renamed} упоминаний, папка /sdcard/MoonMC/minecraft")
+
     if failed:
         return 1
     print(
