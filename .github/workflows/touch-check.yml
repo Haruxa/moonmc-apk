@@ -61,9 +61,9 @@ jobs:
         working-directory: src
         run: |
           GAME=crates/horizon-client/src/game.rs
-          sed -i -e 's/winit::event_loop::EventLoop::new()/crate::event_loop::new()/g' \
-                 -e 's/EventLoop::new()/crate::event_loop::new()/g' "$GAME"
-          echo "через хелпер: $(grep -c 'crate::event_loop::new()' "$GAME")"
+          sed -i -e 's/winit::event_loop::EventLoop::new()/horizon_client::event_loop::new()/g' \
+                 -e 's/EventLoop::new()/horizon_client::event_loop::new()/g' "$GAME"
+          echo "через хелпер: $(grep -c 'horizon_client::event_loop::new()' "$GAME")"
           test "$(grep -c 'EventLoop::new()' "$GAME" || true)" = "0"
 
       - name: Rust + цель aarch64-linux-android
