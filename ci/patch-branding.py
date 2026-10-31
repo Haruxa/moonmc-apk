@@ -7,7 +7,7 @@ adaptive-иконки. package (cat.narezany.horizon) и lib_name не трог�
 иначе сломается загрузка нативной библиотеки.
 
 Иконки лежат готовыми в ci/branding/ (генератор: moon-launcher/tools/gen_icons.py
---layout flat).
+--layout flat). Экран первой загрузки — ci/splash/MoonSplash.java (рисуется кодом).
 """
 import os
 import re
@@ -17,8 +17,82 @@ import sys
 ROOT = os.getcwd()
 ANDROID = os.path.join(ROOT, "android")
 BRAND = os.path.join(ROOT, "ci", "branding")
+SPLASH = os.path.join(ROOT, "ci", "splash")
 MANIFEST = os.path.join(ANDROID, "AndroidManifest.xml")
+ACTIVITY = os.path.join(ANDROID, "java", "cat", "narezany", "horizon", "HorizonActivity.java")
 LABEL = "MoonMC"
+
+# Экран первой загрузки: старый AlertDialog «MargyMC» заменяется на MoonSplash.
+OLD_STATUS = '''    private android.app.AlertDialog status;
+
+    /** Called by the first start's preparing: its step, in a dialog over the black window. */
+    public void showStatus(final String text) {
+        runOnUiThread(() -> {
+            if (status == null) {
+                status = new android.app.AlertDialog.Builder(this)
+                    .setTitle("MargyMC")
+                    .setCancelable(false)
+                    .setMessage(text)
+                    .create();
+                status.show();
+            } else {
+                status.setMessage(text);
+            }
+        });
+    }
+'''
+
+NEW_STATUS = '''    private MoonSplash splash;
+
+    /** Called by the first start's preparing: its step on the MoonMC screen. */
+    public void showStatus(final String text) {
+        runOnUiThread(() -> {
+            if (isDestroyed() || isFinishing()) {
+                return;
+            }
+            if (splash == null) {
+                splash = new MoonSplash(this);
+                splash.show();
+            }
+            splash.step(text);
+        });
+    }
+'''
+
+OLD_DISMISS = '''            if (status != null) {
+                status.dismiss();
+                status = null;
+            }
+'''
+
+NEW_DISMISS = '''            if (splash != null) {
+                splash.finishQuietly();
+                splash = null;
+            }
+'''
+
+OLD_KEYBOARD = '''            if (show) {
+                input.reset();'''
+
+NEW_KEYBOARD = '''            if (splash != null) {
+                // игра просит клавиатуру — значит уже загрузилась, экран больше не нужен
+                splash.finishQuietly();
+                splash = null;
+            }
+            if (show) {
+                input.reset();'''
+
+OLD_RESTART = '''    public void restart() {
+        runOnUiThread(() -> {
+'''
+
+NEW_RESTART = '''    public void restart() {
+        runOnUiThread(() -> {
+            if (splash != null) {
+                splash.finishQuietly();
+                splash = null;
+            }
+'''
 
 
 def die(msg: str) -> None:
@@ -73,6 +147,36 @@ def main() -> int:
 
     label = re.search(r'android:label="([^"]*)"', xml)
     print(f"манифест: label={label.group(1) if label else '???'}, иконка @mipmap/ic_launcher")
+
+    # 4. Экран первой загрузки: файлы ci/splash -> android/java, тело метода в Activity
+    if os.path.isdir(SPLASH):
+        java_dir = os.path.dirname(ACTIVITY)
+        os.makedirs(java_dir, exist_ok=True)
+        for name in sorted(os.listdir(SPLASH)):
+            if name.endswith(".java"):
+                shutil.copyfile(os.path.join(SPLASH, name), os.path.join(java_dir, name))
+                print(f"экран загрузки: {name} -> android/java")
+
+    code = open(ACTIVITY).read()
+    if "MoonSplash" in code:
+        print("экран загрузки: уже пропатчен")
+    else:
+        for old, new, what in (
+            (OLD_STATUS, NEW_STATUS, "showStatus"),
+            (OLD_DISMISS, NEW_DISMISS, "showChoice"),
+            (OLD_RESTART, NEW_RESTART, "restart"),
+            (OLD_KEYBOARD, NEW_KEYBOARD, "setKeyboard"),
+        ):
+            if old not in code:
+                die(f"HorizonActivity.java: не нашёл блок {what}")
+            code = code.replace(old, new, 1)
+        code = code.replace('.setTitle("MargyMC")', '.setTitle("MoonMC")')
+        # остатки — только в комментариях и подсказках: /sdcard/MargyMC и старые заголовки
+        code = code.replace("MargyMC", "MoonMC")
+        if "MargyMC" in code:
+            die("HorizonActivity.java: остались упоминания MargyMC")
+        open(ACTIVITY, "w").write(code)
+        print("экран загрузки: AlertDialog MargyMC -> MoonSplash MoonMC")
     if not label or label.group(1) != LABEL:
         die("не удалось выставить android:label")
     return 0
