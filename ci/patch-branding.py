@@ -36,9 +36,15 @@ def main() -> int:
     copied = 0
     for base, _dirs, files in os.walk(BRAND):
         for name in files:
+            if not name.endswith((".png", ".xml")):
+                continue  # мусор от неудачной загрузки (JSON-листинги каталогов)
             src = os.path.join(base, name)
+            if not os.path.isfile(src):
+                continue
             rel = os.path.relpath(src, BRAND)
             dst = os.path.join(ANDROID, "res", rel)
+            if os.path.isdir(dst):
+                continue
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copyfile(src, dst)
             copied += 1
