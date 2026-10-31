@@ -102,14 +102,17 @@ jobs:
           key: exporters-${{ inputs.source_ref }}-${{ hashFiles('src/Cargo.lock') }}
 
       - name: JDK 25 (для horizon-prepare)
-        if: steps.ex.outputs.cache-hit != 'true'
+        if: steps.ex.outputs.cache-hit != 'true' && env.EXPORTERS_ARTIFACT == ''
         run: |
           curl -fsSL -o /tmp/jdk25.tgz "https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jdk/hotspot/normal/eclipse"
           mkdir -p "$RUNNER_TEMP/jdk25" && tar xzf /tmp/jdk25.tgz -C "$RUNNER_TEMP/jdk25" --strip-components=1
           "$RUNNER_TEMP/jdk25/bin/java" -version 2>&1 | head -2
           echo "JDK25=$RUNNER_TEMP/jdk25" >> "$GITHUB_ENV"
 
-      - name: Файлы Minecraft из Release
+      # В публичном репозитории файлов Minecraft нет и не будет: их не распространяем.
+      # Если свой архив всё же приложен в Release — экспортёры делаются из него, иначе
+      # берём готовый артефакт `exporters` от последней удачной сборки (он тот же).
+      - name: Файлы Minecraft из Release (или экспортёры прошлой сборки)
         if: steps.ex.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -117,23 +120,47 @@ jobs:
           REPO="${{ github.repository }}"
           mkdir -p /tmp/raw "$RUNNER_TEMP/mc"
           if [ -n "${{ inputs.mc_asset }}" ]; then
-            gh release download --repo "$REPO" --pattern "${{ inputs.mc_asset }}" --dir /tmp/raw --clobber
+            gh release download --repo "$REPO" --pattern "${{ inputs.mc_asset }}" --dir /tmp/raw --clobber || true
           else
-            gh release download --repo "$REPO" --pattern '*.zip' --dir /tmp/raw --clobber
+            gh release download --repo "$REPO" --pattern '*.zip' --dir /tmp/raw --clobber || true
           fi
-          ls -l /tmp/raw
-          for z in /tmp/raw/*.zip; do unzip -oq "$z" -d "$RUNNER_TEMP/mc"; done
+          if ls /tmp/raw/*.zip >/dev/null 2>&1; then
+            ls -l /tmp/raw
+            for z in /tmp/raw/*.zip; do unzip -oq "$z" -d "$RUNNER_TEMP/mc"; done
+            rm -rf /tmp/raw
+            MC="$RUNNER_TEMP/mc"
+            if [ -d "$MC/.minecraft" ]; then MC="$MC/.minecraft"; fi
+            if [ -d "$MC/minecraft" ]; then MC="$MC/minecraft"; fi
+            if [ -f "$MC/versions/26.3/26.3.jar" ]; then
+              echo "MC=$MC" >> "$GITHUB_ENV"
+              echo "== содержимое $MC:"; ls "$MC"; du -sh "$MC"/* | head
+              df -h /
+              exit 0
+            fi
+            echo "::warning::в архиве нет versions/26.3/26.3.jar — беру готовые экспортёры"
+          fi
           rm -rf /tmp/raw
-          MC="$RUNNER_TEMP/mc"
-          if [ -d "$MC/.minecraft" ]; then MC="$MC/.minecraft"; fi
-          if [ -d "$MC/minecraft" ]; then MC="$MC/minecraft"; fi
-          echo "MC=$MC" >> "$GITHUB_ENV"
-          echo "== содержимое $MC:"; ls "$MC"; du -sh "$MC"/* | head
-          test -f "$MC/versions/26.3/26.3.jar" || { echo "::error::нет $MC/versions/26.3/26.3.jar"; exit 1; }
-          df -h /
+          url=$(gh api "repos/$REPO/actions/artifacts?name=exporters&per_page=50" \
+                  --jq '[.artifacts[] | select(.expired == false)][0].archive_download_url // ""')
+          if [ -z "$url" ]; then
+            echo "::error::нет ни архива Minecraft в Release, ни артефакта exporters — приложи свой архив (mc_asset) в Release"
+            exit 1
+          fi
+          gh api -H "Accept: application/vnd.github+json" "repos/$REPO/actions/artifacts?name=exporters&per_page=50" \
+            --jq '[.artifacts[] | select(.expired == false)][0].id' > /tmp/art.id
+          ART=$(cat /tmp/art.id)
+          echo "беру exporters из артефакта $ART"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            -o /tmp/exporters.zip "https://api.github.com/repos/$REPO/actions/artifacts/$ART/zip"
+          unzip -oq /tmp/exporters.zip -d /tmp/exporters
+          TGZ=$(find /tmp/exporters -name 'exporters.tgz' | head -1)
+          test -n "$TGZ" || { echo "::error::в артефакте нет exporters.tgz"; exit 1; }
+          cp "$TGZ" "$RUNNER_TEMP/exporters.tgz"
+          ls -lh "$RUNNER_TEMP/exporters.tgz"
+          echo "EXPORTERS_ARTIFACT=1" >> "$GITHUB_ENV"
 
       - name: horizon-prepare --prepare
-        if: steps.ex.outputs.cache-hit != 'true'
+        if: steps.ex.outputs.cache-hit != 'true' && env.EXPORTERS_ARTIFACT == ''
         working-directory: src
         run: |
           set -o pipefail
@@ -149,13 +176,14 @@ jobs:
           df -h /
 
       - name: Упаковать exporters
-        if: steps.ex.outputs.cache-hit != 'true'
+        if: steps.ex.outputs.cache-hit != 'true' && env.EXPORTERS_ARTIFACT == ''
         working-directory: src
         run: |
           tar czf "$RUNNER_TEMP/exporters.tgz" -C .local exporters
           ls -lh "$RUNNER_TEMP/exporters.tgz"
 
       - name: Артефакт exporters
+        if: env.EXPORTERS_ARTIFACT == ''
         uses: actions/upload-artifact@v4
         with:
           name: exporters
