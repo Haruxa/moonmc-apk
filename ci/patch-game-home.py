@@ -312,30 +312,54 @@ pub(crate) fn native_library_dir() -> Option<String> {
 
 
 def patch_jre_bits() -> None:
-    """Права JRE и отчёт о нём.
+    """Права JRE, отчёт о `bin/java` и пересборка, если он не исполняемый.
 
-    Gradle-упаковка может не сохранить биты исполнения, а Android может запретить
-    запуск файла из папки данных. Поэтому: ставим 0755 на всё дерево JRE и пишем
-    отчёт `moonmc-jre.txt` в папку игры — по нему видно точную причину отказа.
+    Gradle-упаковка может не сохранить биты исполнения, а предыдущая неудачная
+    попытка оставляет `jre/` с файлом `release`, из-за чего JRE больше никогда не
+    перепаковывается. Поэтому: 0755 на всё дерево JRE, отчёт в диалог ошибки и
+    повторная распаковка, если `bin/java` не исполняемый.
     """
     path = pathlib.Path("crates/horizon-client/src/android_setup.rs")
     if not path.is_file():
         return
     text = path.read_text()
-    if "moonmc-jre.txt" in text:
-        print("android_setup.rs: права JRE и отчёт уже на месте")
+    if "java_ok" in text:
+        print("android_setup.rs: JRE-патчи уже наложены")
         return
     anchor = "    // Horizon's exporters (sources, classes, research-lock.json): every start, they are small."
-    block = """    // MoonMC: права JRE и отчёт о нём (см. patch-game-home.py).
-    ensure_executable(jre);
-    report_jre(home, jre);
+    if anchor not in text:
+        print("::warning::android_setup.rs: не нашёл место для прав JRE")
+        return
+    text = text.replace(
+        anchor,
+        "    // MoonMC: права JRE и отчёт о нём (см. patch-game-home.py).\n"
+        "    ensure_executable(jre);\n"
+        "    report_jre(home, jre);\n\n" + anchor,
+        1,
+    )
 
-"""
+    early_old = """    let mut archives = Vec::new();
+    if !jre.join("release").is_file() {"""
+    early_new = """    // MoonMC: пересобираем JRE, если java не исполняемый или пропал.
+    let java_ok = {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(jre.join("bin/java"))
+            .map(|m| m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    };
+    // MoonMC: отчёт о JRE до распаковки.
+    report_jre(&home, &jre);
+    let mut archives = Vec::new();
+    if !jre.join("release").is_file() || !java_ok {"""
+    if early_old in text:
+        text = text.replace(early_old, early_new, 1)
+    else:
+        print("::warning::android_setup.rs: не нашёл блок распаковки JRE")
+
     helper = """
-/// Отчёт о JRE: показывается в диалоге ошибки подготовки, чтобы не гадать.
+/// Отчёт о JRE: попадает и в диалог ошибки подготовки, и в файл рядом с игрой.
 static JRE_REPORT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
-/// Ставит права на файлы JRE и пишет отчёт о `bin/java` в папку игры.
 fn report_jre(home: &Path, jre: &Path) {
     use std::os::unix::fs::PermissionsExt;
     let java = jre.join("bin/java");
@@ -361,25 +385,13 @@ fn report_jre(home: &Path, jre: &Path) {
         )),
         Err(e) => report.push_str(&format!("run: error {e} (kind {:?})\n", e.kind())),
     }
-    let sh = std::process::Command::new("/system/bin/sh")
-        .arg("-c")
-        .arg(format!("{} -version 2>&1 | head -2", java.display()))
-        .output();
-    match sh {
-        Ok(out) => report.push_str(&format!(
-            "via sh: {}\n",
-            String::from_utf8_lossy(&out.stdout).trim()
-        )),
-        Err(e) => report.push_str(&format!("via sh: error {e}\n")),
-    }
-    // Отчёт кладём туда, где его видно с телефона (home может быть приватным).
     let public = std::path::Path::new("/sdcard/MoonMC/horizon");
     if std::fs::create_dir_all(public).is_ok() {
         let _ = std::fs::write(public.join("moonmc-jre.txt"), &report);
     }
     let _ = std::fs::write(home.join("moonmc-jre.txt"), &report);
     if let Ok(mut slot) = JRE_REPORT.lock() {
-        *slot = report.clone();
+        *slot = report;
     }
 }
 
@@ -406,32 +418,17 @@ fn ensure_executable(jre: &Path) {
 
 fn setup(
     home: &Path,"""
-    if anchor not in text:
-        print("::warning::android_setup.rs: не нашёл место для отчёта JRE")
-        return
-    text = text.replace(anchor, block + anchor, 1)
     text = text.replace("\nfn setup(\n    home: &Path,", helper, 1)
-    # отчёт ещё до распаковки: он нужен и в случае, если setup() не дойдёт до конца
-    early = """    let mut archives = Vec::new();
-    if !jre.join("release").is_file() {"""
-    if early in text and "report_jre(&home, &jre);\n    let mut archives" not in text:
-        text = text.replace(
-            early,
-            "    // MoonMC: отчёт о JRE до распаковки.\n    report_jre(&home, &jre);\n" + early,
-            1,
-        )
+
+    # отчёт в тексте ошибки подготовки
+    text = text.replace(
+        '                    set(&format!("Preparing failed:\\n{e}"));',
+        '                    let report = JRE_REPORT.lock().map(|r| r.clone()).unwrap_or_default();\n'
+        '                    set(&format!("Preparing failed:\\n{e}\\n\\n{report}"));',
+        1,
+    )
     path.write_text(text)
-    print("android_setup.rs: права JRE + отчёт moonmc-jre.txt")
-
-
-# Ребрендинг: старые пути и подписи «MargyMC» -> «MoonMC» (в том числе /sdcard/MoonMC/minecraft).
-REBRAND = [
-    pathlib.Path("crates/horizon-client/src/android_setup.rs"),
-    pathlib.Path("crates/horizon-client/src/android.rs"),
-    pathlib.Path("crates/horizon-client/src/title.rs"),
-    pathlib.Path("android/AndroidManifest.xml"),
-]
-
+    print("android_setup.rs: права JRE, отчёт и пересборка при неисполняемом java")
 
 def main() -> int:
     failed = False
