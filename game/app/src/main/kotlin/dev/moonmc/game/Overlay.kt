@@ -102,6 +102,9 @@ object Overlay {
         d.setContentView(host)
         d.window?.apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            // Полупрозрачный формат окна: поверх Vulkan-поверхности игры аппаратное
+            // сведение окна на части драйверов Mali валит процесс без java-следа.
+            setFormat(android.graphics.PixelFormat.TRANSLUCENT)
             setLayout(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
