@@ -91,5 +91,7 @@ dependencies {
     implementation("androidx.compose.material3:material3:1.5.0-beta02")
     implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
+    implementation("androidx.lifecycle:lifecycle-viewmodel:2.9.4")
+    implementation("androidx.savedstate:savedstate:1.3.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
 }

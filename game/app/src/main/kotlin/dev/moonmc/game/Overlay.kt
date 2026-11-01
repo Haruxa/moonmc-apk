@@ -42,13 +42,20 @@ object Overlay {
     fun attach(activity: Activity) {
         activity.runOnUiThread {
             if (dialog?.isShowing == true) return@runOnUiThread
-            val view = ComposeView(activity).apply {
-                setContent {
-                    MaterialTheme(colorScheme = darkColorScheme()) { Layer(activity) }
-                }
-            }
+            val host = OverlayHost(activity)
+            host.addView(
+                ComposeView(activity).apply {
+                    setContent {
+                        MaterialTheme(colorScheme = darkColorScheme()) { Layer(activity) }
+                    }
+                },
+                android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
             val d = Dialog(activity, android.R.style.Theme_Material_NoActionBar_Fullscreen)
-            d.setContentView(view)
+            d.setContentView(host)
             d.window?.apply {
                 setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
                 setLayout(
@@ -205,5 +212,30 @@ object Overlay {
             f.parentFile?.mkdirs()
             f.writeText(values.entries.joinToString("\n") { "${it.key}=${it.value}" } + "\n")
         }
+    }
+}
+
+/**
+ * Контейнер для Compose внутри NativeActivity: она не является LifecycleOwner,
+ * поэтому ComposeView сам по себе падает с "ViewTreeLifecycleOwner not found".
+ */
+private class OverlayHost(context: android.content.Context) :
+    android.widget.FrameLayout(context),
+    androidx.lifecycle.LifecycleOwner,
+    androidx.savedstate.SavedStateRegistryOwner,
+    androidx.lifecycle.ViewModelStoreOwner {
+
+    private val lifecycleRegistry = androidx.lifecycle.LifecycleRegistry(this)
+    private val savedStateController = androidx.savedstate.SavedStateRegistryController.create(this)
+    override val viewModelStore = androidx.lifecycle.ViewModelStore()
+
+    override val lifecycle: androidx.lifecycle.Lifecycle get() = lifecycleRegistry
+
+    override val savedStateRegistry: androidx.savedstate.SavedStateRegistry
+        get() = savedStateController.savedStateRegistry
+
+    init {
+        savedStateController.performRestore(null)
+        lifecycleRegistry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED
     }
 }
