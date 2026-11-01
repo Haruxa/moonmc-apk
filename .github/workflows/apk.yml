@@ -71,13 +71,20 @@ jobs:
                       "$AGENT_TOOLSDIRECTORY" || true
           df -h /
 
+      # Gitea отдаёт архив только части клиентов (403 раннерам), поэтому при отказе
+      # просто клонируем тот же репозиторий.
       - name: Скачать исходники MargyMC
         run: |
-          mkdir -p src && cd src
-          curl -fsSL --retry 3 -o s.tgz "${{ inputs.source_url }}/archive/${{ inputs.source_ref }}.tar.gz"
-          tar xzf s.tgz --strip-components=1 && rm -f s.tgz
-
-          ls research-lock.json
+          SOURCE="${{ inputs.source_url }}"
+          REF="${{ inputs.source_ref }}"
+          if curl -fsSL --retry 3 -o /tmp/s.tgz "$SOURCE/archive/$REF.tar.gz"; then
+            mkdir -p src && tar xzf /tmp/s.tgz -C src --strip-components=1 && rm -f /tmp/s.tgz
+          else
+            echo "::warning::архив $REF недоступен — клонирую $SOURCE"
+            rm -rf src
+            git clone -q --depth 1 --branch "$REF" "$SOURCE" src
+          fi
+          ls src/research-lock.json
 
       - name: Rust
         run: |
@@ -211,9 +218,15 @@ jobs:
       - name: Скачать исходники MargyMC
         if: inputs.native_pin == ''
         run: |
-          mkdir -p src && cd src
-          curl -fsSL --retry 3 -o s.tgz "${{ inputs.source_url }}/archive/${{ inputs.source_ref }}.tar.gz"
-          tar xzf s.tgz --strip-components=1 && rm -f s.tgz
+          SOURCE="${{ inputs.source_url }}"
+          REF="${{ inputs.source_ref }}"
+          if curl -fsSL --retry 3 -o /tmp/s.tgz "$SOURCE/archive/$REF.tar.gz"; then
+            mkdir -p src && tar xzf /tmp/s.tgz -C src --strip-components=1 && rm -f /tmp/s.tgz
+          else
+            echo "::warning::архив $REF недоступен — клонирую $SOURCE"
+            rm -rf src
+            git clone -q --depth 1 --branch "$REF" "$SOURCE" src
+          fi
 
       - name: "Дерево: пин игры + Android-порт MargyMC"
         if: inputs.native_pin != ''
