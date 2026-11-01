@@ -97,7 +97,29 @@ NEW_KEYBOARD = '''            if (splash != null) {
             if (show) {
                 input.reset();'''
 
-OVERLAY = '''        // MoonMC: игровой Compose-слой (настройки и управление). Через рефлексию,
+OVERLAY = '''        // MoonMC: любая необработанная ошибка пишется рядом с игрой — иначе краш
+        // на старте нечем диагностировать (лог Rust в этот момент ещё пуст).
+        final Thread.UncaughtExceptionHandler previousHandler =
+            Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
+            try {
+                java.io.File dir = new java.io.File("/sdcard/MoonMC/horizon");
+                dir.mkdirs();
+                java.io.StringWriter text = new java.io.StringWriter();
+                error.printStackTrace(new java.io.PrintWriter(text));
+                try (java.io.FileWriter out = new java.io.FileWriter(
+                        new java.io.File(dir, "moonmc-crash.txt"))) {
+                    out.write(thread.getName() + "\\n" + text);
+                }
+            } catch (Throwable ignoredWrite) {
+                // писать некуда — молчим
+            }
+            if (previousHandler != null) {
+                previousHandler.uncaughtException(thread, error);
+            }
+        });
+
+        // MoonMC: игровой Compose-слой (настройки и управление). Через рефлексию,
         // чтобы сборка без него оставалась рабочей.
         try {
             Class<?> layer = Class.forName("dev.moonmc.game.Overlay");
