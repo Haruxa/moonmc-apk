@@ -13,8 +13,10 @@ android {
 
     defaultConfig {
         applicationId = "dev.moonmc.moonmc"
-        minSdk = 29
-        targetSdk = 35
+        minSdk = 26
+        // Android 10+ запрещает запускать файлы из папки данных при targetSdk >= 29,
+        // а клиенту нужно запускать JRE (jre/bin/java). 28 — как у Pojav/Zalith.
+        targetSdk = 28
         versionCode = 100
         versionName = "1.0.0"
         ndk { abiFilters += "arm64-v8a" }
