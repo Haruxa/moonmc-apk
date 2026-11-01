@@ -43,15 +43,26 @@ def main() -> None:
     menu = pathlib.Path(sys.argv[2] if len(sys.argv) > 2 else "ci/touch_menu.rs")
     MENU.write_text(menu.read_text())
 
-    # 1. Регистрация модуля рядом с `mod touch;`.
+    # 1. Регистрация модуля рядом с `mod touch;` (в новых пинах её нет — добавляем).
     mod = GAME.read_text()
     anchor = next(
         (line for line in mod.splitlines() if line.strip() in ("mod touch;", "pub mod touch;", "pub(super) mod touch;")),
         None,
     )
     if anchor is None:
-        ERRORS.append("game.rs: нет `mod touch;`")
-        anchor = ""
+        host = next(
+            (line for line in mod.splitlines() if line.strip() in ("mod mods;", "pub mod mods;")),
+            None,
+        )
+        if host is None:
+            ERRORS.append("game.rs: некуда поставить `mod touch;`")
+            anchor = ""
+        else:
+            mod = mod.replace(host, host + "\nmod touch;", 1)
+            GAME.write_text(mod)
+            mod = GAME.read_text()
+            anchor = "mod touch;"
+            print("game.rs: добавил `mod touch;`")
     if "mod touch_layout;" not in mod:
         indent = anchor[: len(anchor) - len(anchor.lstrip())]
         visibility = anchor.strip().split("mod ")[0]
