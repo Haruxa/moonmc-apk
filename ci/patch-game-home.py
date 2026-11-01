@@ -369,6 +369,11 @@ fn report_jre(home: &Path, jre: &Path) {
         )),
         Err(e) => report.push_str(&format!("via sh: error {e}\n")),
     }
+    // Отчёт кладём туда, где его видно с телефона (home может быть приватным).
+    let public = std::path::Path::new("/sdcard/MoonMC/horizon");
+    if std::fs::create_dir_all(public).is_ok() {
+        let _ = std::fs::write(public.join("moonmc-jre.txt"), &report);
+    }
     let _ = std::fs::write(home.join("moonmc-jre.txt"), &report);
 }
 
