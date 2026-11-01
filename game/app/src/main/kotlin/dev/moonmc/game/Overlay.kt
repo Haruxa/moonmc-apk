@@ -36,6 +36,8 @@ import java.io.File
 object Overlay {
     private const val PERF = "moonmc/perf.txt"
     private const val LAYOUT_DIR = "touch/zalith"
+    /** Файл-выключатель слоя управления (крайняя мера при крашах). */
+    private const val LAYER_OFF = "moonmc-layer-off.txt"
     private var dialog: Dialog? = null
 
     @JvmStatic
@@ -71,13 +73,26 @@ object Overlay {
 
     private fun show(activity: Activity) {
         if (dialog?.isShowing == true) return
+        // Выключатель слоя: если файл есть, играем без него (крайняя мера при крашах).
+        if (gameDir(LAYER_OFF).exists() ||
+            File(activity.getExternalFilesDir(null) ?: activity.filesDir, LAYER_OFF).exists()
+        ) {
+            step(activity, "layer disabled by file")
+            return
+        }
+        step(activity, "start")
         val host = OverlayHost(activity)
+        step(activity, "host ok")
+        // Пишем софтверный слой: над Vulkan-поверхностью игры аппаратный рендер Compose
+        // на части драйверов Mali роняет процесс без единой java-строки в логе.
+        val view = ComposeView(activity)
+        view.setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
+        view.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) { Layer(activity) }
+        }
+        step(activity, "compose ok")
         host.addView(
-            ComposeView(activity).apply {
-                setContent {
-                    MaterialTheme(colorScheme = darkColorScheme()) { Layer(activity) }
-                }
-            },
+            view,
             android.widget.FrameLayout.LayoutParams(
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
@@ -95,7 +110,14 @@ object Overlay {
             addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
         }
         dialog = d
+        step(activity, "dialog ok")
         d.show()
+        step(activity, "shown")
+    }
+
+    /** Шаги запуска слоя: видно, до какого места дошло перед крашем. */
+    private fun step(activity: Activity, text: String) {
+        report(activity, "moonmc-layer-step.txt", text)
     }
 
     private fun gameDir(name: String) = File("/sdcard/MoonMC/horizon", name)
