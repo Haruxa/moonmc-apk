@@ -411,6 +411,15 @@ fn setup(
         return
     text = text.replace(anchor, block + anchor, 1)
     text = text.replace("\nfn setup(\n    home: &Path,", helper, 1)
+    # отчёт ещё до распаковки: он нужен и в случае, если setup() не дойдёт до конца
+    early = """    let mut archives = Vec::new();
+    if !jre.join("release").is_file() {"""
+    if early in text and "report_jre(&home, &jre);\n    let mut archives" not in text:
+        text = text.replace(
+            early,
+            "    // MoonMC: отчёт о JRE до распаковки.\n    report_jre(&home, &jre);\n" + early,
+            1,
+        )
     path.write_text(text)
     print("android_setup.rs: права JRE + отчёт moonmc-jre.txt")
 
