@@ -184,6 +184,20 @@ def main() -> int:
                 print(f"экран загрузки: {name} -> android/java")
 
     code = open(ACTIVITY).read()
+    if "nativeLibraryDir" not in code:
+        anchor = "    /** Called once preparing is done: the app starts again, now with its resources. */"
+        method = """    /** MoonMC: папка нативных библиотек (в Gradle-сборке libs лежат внутри APK). */
+    public String nativeLibraryDir() {
+        String dir = getApplicationInfo().nativeLibraryDir;
+        return dir == null ? "" : dir;
+    }
+
+"""
+        if anchor in code:
+            code = code.replace(anchor, method + anchor, 1)
+            open(ACTIVITY, "w").write(code)
+            print("экран: добавлен nativeLibraryDir()")
+
     if "dev.moonmc.game.Overlay" not in code:
         anchor = "        addContentView(input, new ViewGroup.LayoutParams(1, 1));"
         if anchor not in code:

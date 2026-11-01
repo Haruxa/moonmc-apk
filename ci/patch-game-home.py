@@ -234,6 +234,83 @@ def patch_workspace() -> None:
     print("Cargo.toml: добавил crates/horizon-android в members")
 
 
+ANDROID_RS = pathlib.Path("crates/horizon-client/src/android.rs")
+SETUP_RS = pathlib.Path("crates/horizon-client/src/android_setup.rs")
+
+
+def patch_library_dir() -> None:
+    """Gradle-сборка держит libhorizon.so внутри APK: /proc/self/maps даёт путь
+    вида `base.apk!/lib/arm64-v8a/libhorizon.so`, и каталога библиотек не найти.
+    Спрашиваем каталог у Activity (nativeLibraryDir), карту читаем как запасной путь."""
+    if ANDROID_RS.is_file() and "fn native_library_dir" not in ANDROID_RS.read_text():
+        text = ANDROID_RS.read_text()
+        helper = """
+/// MoonMC: каталог нативных библиотек (спрашиваем у Activity).
+#[allow(unsafe_code)]
+pub(crate) fn native_library_dir() -> Option<String> {
+    let Some(&(vm, activity)) = JAVA.get() else {
+        return None;
+    };
+    // SAFETY: the process's VM, which lives as long as it.
+    let Ok(vm) = (unsafe { jni::JavaVM::from_raw(vm as *mut jni::sys::JavaVM) }) else {
+        return None;
+    };
+    let Ok(mut env) = vm.attach_current_thread() else {
+        return None;
+    };
+    // SAFETY: the activity's global reference, held by the NativeActivity while it lives.
+    let activity = unsafe { jni::objects::JObject::from_raw(activity as jni::sys::jobject) };
+    let Ok(value) = env.call_method(&activity, "nativeLibraryDir", "()Ljava/lang/String;", &[]) else {
+        return None;
+    };
+    let Ok(text) = value.l() else {
+        return None;
+    };
+    let text: String = env.get_string(&text.into()).ok()?.into();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+"""
+        ANDROID_RS.write_text(text + helper)
+        print("android.rs: native_library_dir() добавлен")
+
+    if SETUP_RS.is_file():
+        text = SETUP_RS.read_text()
+        old = """fn library_dir() -> Option<PathBuf> {
+    let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
+    maps.lines()
+        .filter_map(|line| line.split_whitespace().nth(5))
+        .find(|path| path.ends_with("/libhorizon.so"))
+        .and_then(|path| Path::new(path).parent().map(Path::to_path_buf))
+}"""
+        new = """fn library_dir() -> Option<PathBuf> {
+    // MoonMC: libhorizon.so может лежать внутри APK (mmap), тогда в /proc/self/maps
+    // путь выглядит как `base.apk!/lib/arm64-v8a/libhorizon.so`. Каталог спрашиваем
+    // у Activity, а карту читаем только как запасной вариант.
+    if let Some(dir) = crate::native_library_dir() {
+        let path = PathBuf::from(dir);
+        if path.is_dir() {
+            return Some(path);
+        }
+    }
+    let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
+    maps.lines()
+        .filter_map(|line| line.split_whitespace().nth(5))
+        .find(|path| path.ends_with("/libhorizon.so") && !path.contains("!/"))
+        .and_then(|path| Path::new(path).parent().map(Path::to_path_buf))
+}"""
+        if new in text:
+            print("android_setup.rs: library_dir уже патчен")
+        elif old in text:
+            SETUP_RS.write_text(text.replace(old, new, 1))
+            print("android_setup.rs: library_dir берёт каталог у Activity")
+        else:
+            print("::warning::android_setup.rs: не нашёл library_dir")
+
+
 # Ребрендинг: старые пути и подписи «MargyMC» -> «MoonMC» (в том числе /sdcard/MoonMC/minecraft).
 REBRAND = [
     pathlib.Path("crates/horizon-client/src/android_setup.rs"),
@@ -262,6 +339,9 @@ def main() -> int:
             continue
         path.write_text(text.replace(original, patched, 1))
         print(f"{path}: пропатчен")
+    # 2. Каталог библиотек под Gradle-сборку
+    patch_library_dir()
+
     # 2a. Порт как крейт рабочего пространства
     patch_workspace()
 
