@@ -229,22 +229,26 @@ jobs:
             git clone -q --depth 1 --branch "$REF" "$SOURCE" src
           fi
 
-      # Android-порт больше не тянем с git.narez.xyz (он режет раннеры GitHub):
-      # наш снимок порта лежит в ci/port/port.tgz и распаковывается поверх пина.
-      - name: "Дерево: пин движка + снимок Android-порта"
+      # Порт берём из репозитория MargyMC (cherry-pick двух коммитов). Если Gitea
+      # отвечает 403 (лимит на раннеры) — сборка честно падает с понятным текстом:
+      # наш снимок порта в ci/port работает, но ещё не догнал API этого пина.
+      - name: "Дерево: пин движка + Android-порт MargyMC"
         if: inputs.native_pin != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git clone -q https://github.com/horizon-rust/horizon src
           cd src
+          git config user.email ci@example.com && git config user.name ci
           git fetch -q --depth 1 origin "${{ inputs.native_pin }}"
           git checkout -q FETCH_HEAD
+          if git fetch -q https://git.narez.xyz/narezany/MargyMC \
+               d4aaf6c53a9280ae8d8b0cedff0865661c6bb39f 7fbee7186d230003cffd44b34eee9be368a59188; then
+            git cherry-pick -n -X ours d4aaf6c53a9280ae8d8b0cedff0865661c6bb39f 7fbee7186d230003cffd44b34eee9be368a59188
+          else
+            echo "::error::git.narez.xyz недоступен (403) — порт не получить. Повтори сборку позже."
+            exit 1
+          fi
           echo "${{ inputs.native_pin }}" > .horizon-revision
-          gh api "repos/${{ github.repository }}/contents/ci/port/port.tgz?ref=${{ github.sha }}" \
-            -H "Accept: application/vnd.github.raw" > /tmp/port.tgz
-          tar xzf /tmp/port.tgz -C .
-          echo "== дерево: HEAD=$(git rev-parse --short HEAD) порт: $(git status --porcelain | wc -l) файлов"
+          echo "== дерево: HEAD=$(git rev-parse --short HEAD) файлов=$(git status --porcelain | wc -l)"
 
       - name: Скрипты и патчи из нашего репозитория
         env:
