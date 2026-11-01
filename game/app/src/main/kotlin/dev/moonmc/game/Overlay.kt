@@ -41,33 +41,42 @@ object Overlay {
     @JvmStatic
     fun attach(activity: Activity) {
         activity.runOnUiThread {
-            if (dialog?.isShowing == true) return@runOnUiThread
-            val host = OverlayHost(activity)
-            host.addView(
-                ComposeView(activity).apply {
-                    setContent {
-                        MaterialTheme(colorScheme = darkColorScheme()) { Layer(activity) }
-                    }
-                },
-                android.widget.FrameLayout.LayoutParams(
-                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                ),
-            )
-            val d = Dialog(activity, android.R.style.Theme_Material_NoActionBar_Fullscreen)
-            d.setContentView(host)
-            d.window?.apply {
-                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-                setLayout(
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                )
-                setDimAmount(0f)
-                addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+            try {
+                show(activity)
+            } catch (t: Throwable) {
+                // Слой не должен ронять игру: пишем причину рядом с игрой.
+                runCatching { gameDir("moonmc-overlay.txt").writeText(t.toString() + "\n" + t.stackTraceToString()) }
             }
-            dialog = d
-            d.show()
         }
+    }
+
+    private fun show(activity: Activity) {
+        if (dialog?.isShowing == true) return
+        val host = OverlayHost(activity)
+        host.addView(
+            ComposeView(activity).apply {
+                setContent {
+                    MaterialTheme(colorScheme = darkColorScheme()) { Layer(activity) }
+                }
+            },
+            android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        val d = Dialog(activity, android.R.style.Theme_Material_NoActionBar_Fullscreen)
+        d.setContentView(host)
+        d.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+            )
+            setDimAmount(0f)
+            addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+        }
+        dialog = d
+        d.show()
     }
 
     private fun gameDir(name: String) = File("/sdcard/MoonMC/horizon", name)
@@ -235,6 +244,8 @@ private class OverlayHost(context: android.content.Context) :
         get() = savedStateController.savedStateRegistry
 
     init {
+        // Сначала attach, потом restore: иначе SavedStateRegistry бросает исключение.
+        savedStateController.performAttach()
         savedStateController.performRestore(null)
         lifecycleRegistry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED
     }
