@@ -311,6 +311,61 @@ pub(crate) fn native_library_dir() -> Option<String> {
             print("::warning::android_setup.rs: не нашёл library_dir")
 
 
+def patch_jre_bits() -> None:
+    """Gradle-упаковка APK может не сохранить биты исполнения у JRE.
+
+    `tar::unpack` ставит режимы из архива, но если APK пересобрал ассеты и права
+    потерялись, `jre/bin/java` получается без +x → «Permission denied (os error 13)».
+    Поэтому после распаковки расставляем режимы сами.
+    """
+    path = pathlib.Path("crates/horizon-client/src/android_setup.rs")
+    if not path.is_file():
+        return
+    text = path.read_text()
+    if "ensure_executable" in text:
+        print("android_setup.rs: права JRE уже расставляются")
+        return
+    old = """    // Horizon's exporters (sources, classes, research-lock.json): every start, they are small."""
+    new = """    // MoonMC: права JRE — на случай, если APK не сохранил биты исполнения.
+    ensure_executable(jre);
+
+    // Horizon's exporters (sources, classes, research-lock.json): every start, they are small."""
+    helper = """
+/// Ставит права на файлы JRE: `bin/*` — исполняемые, остальное — читаемые.
+fn ensure_executable(jre: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut stack = vec![jre.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let in_bin = path
+                .components()
+                .any(|part| part.as_os_str() == "bin");
+            let mode = if in_bin { 0o755 } else { 0o644 };
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode));
+        }
+    }
+}
+
+fn setup(
+    home: &Path,"""
+    if old in text:
+        text = text.replace(old, new, 1)
+        text = text.replace("\nfn setup(\n    home: &Path,", helper, 1)
+        path.write_text(text)
+        print("android_setup.rs: права JRE расставляются после распаковки")
+    else:
+        print("::warning::android_setup.rs: не нашёл место для ensure_executable")
+
+
 # Ребрендинг: старые пути и подписи «MargyMC» -> «MoonMC» (в том числе /sdcard/MoonMC/minecraft).
 REBRAND = [
     pathlib.Path("crates/horizon-client/src/android_setup.rs"),
@@ -339,8 +394,9 @@ def main() -> int:
             continue
         path.write_text(text.replace(original, patched, 1))
         print(f"{path}: пропатчен")
-    # 2. Каталог библиотек под Gradle-сборку
+    # 2. Права JRE и каталог библиотек под Gradle-сборку
     patch_library_dir()
+    patch_jre_bits()
 
     # 2a. Порт как крейт рабочего пространства
     patch_workspace()
