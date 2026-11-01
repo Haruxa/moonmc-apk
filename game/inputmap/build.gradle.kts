@@ -13,3 +13,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 }
+
+dependencies {
+    // ключи помечены @Nullable из androidx.annotation
+    implementation("androidx.annotation:annotation:1.9.1")
+}
