@@ -94,7 +94,15 @@ jobs:
           python3 ci/patch-branding.py
           python3 ci/patch-package.py
           python3 ci/patch-touch.py ci/touch_layout.rs ci/touch_menu.rs || true
-          bash ci/build-apk-modded.sh 2>&1 | tail -40
+          set +e
+          bash ci/build-apk-modded.sh > /tmp/build.log 2>&1
+          status=$?
+          tail -15 /tmp/build.log
+          if [ $status -ne 0 ]; then
+            echo "== ошибки сборки:"
+            grep -E "^(error|error\[)" /tmp/build.log | head -20
+            exit $status
+          fi
           ls -l android/out/stage/lib/arm64-v8a/ android/out/assets | head -20
 
       - name: Разложить в Gradle-проект
