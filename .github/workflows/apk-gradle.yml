@@ -63,32 +63,50 @@ jobs:
           curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
           . "$HOME/.cargo/env"; rustc -V
 
-      - name: "Патчи: папка игры, брендинг, пакет, тач"
-        working-directory: src
+      # exporters и ассеты берём тем же способом, что и apk.yml
+      - name: Забрать exporters
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          REPO="${{ github.repository }}"
+          mkdir -p "$RUNNER_TEMP"
+          id=$(gh api "repos/$REPO/actions/artifacts?name=exporters&per_page=50" \
+                 --jq '[.artifacts[] | select(.expired == false)][0].id // ""' || true)
+          test -n "$id" || { echo "::error::нет артефакта exporters"; exit 1; }
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            -o /tmp/exporters.zip "https://api.github.com/repos/$REPO/actions/artifacts/$id/zip"
+          rm -rf /tmp/exporters && unzip -oq /tmp/exporters.zip -d /tmp/exporters
+          find /tmp/exporters -name exporters.tgz -exec cp {} "$RUNNER_TEMP/exporters.tgz" \;
+          ls -lh "$RUNNER_TEMP/exporters.tgz"
+
+      - name: "Патчи и сборка дерева (нативка, java, res, ассеты)"
+        working-directory: src
+        env:
+          PROFILE: ${{ inputs.profile }}
+          MODS: 1
+          CI_KEYSTORE_B64: ${{ secrets.CI_KEYSTORE_B64 }}
+          CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
+        run: |
+          cp -a "$GITHUB_WORKSPACE/ci" ci
+          mkdir -p .local && tar xzf "$RUNNER_TEMP/exporters.tgz" -C .local
           python3 ci/patch-game-home.py
           python3 ci/patch-branding.py
           python3 ci/patch-package.py
           python3 ci/patch-touch.py ci/touch_layout.rs ci/touch_menu.rs || true
-
-      - name: Собрать libhorizon.so
-        working-directory: src
-        run: |
-          . "$HOME/.cargo/env"
-          cargo build --profile "${{ inputs.profile }}" --target aarch64-linux-android \
-            -p horizon-android --features mods
-          ls -lh target/aarch64-linux-android/${{ inputs.profile }}/libhorizon.so
+          bash ci/build-apk-modded.sh 2>&1 | tail -40
+          ls -l android/out/stage/lib/arm64-v8a/ android/out/assets | head -20
 
       - name: Разложить в Gradle-проект
         run: |
-          mkdir -p game/app/src/main/{jniLibs/arm64-v8a,java,res,assets}
-          cp src/target/aarch64-linux-android/${{ inputs.profile }}/libhorizon.so \
-             game/app/src/main/jniLibs/arm64-v8a/
+          mkdir -p game/app/src/main/jniLibs/arm64-v8a
+          cp src/android/out/stage/lib/arm64-v8a/libhorizon.so game/app/src/main/jniLibs/arm64-v8a/
+          rm -rf game/app/src/main/res game/app/src/main/assets game/app/src/main/java
+          mkdir -p game/app/src/main/res game/app/src/main/assets game/app/src/main/java
           cp -a src/android/res/. game/app/src/main/res/
-          cp src/android/AndroidManifest.xml game/app/src/main/AndroidManifest.xml
+          cp -a src/android/out/assets/. game/app/src/main/assets/
           cp -a src/android/java/. game/app/src/main/java/
-          find game/app/src/main -maxdepth 2 -type d | head -12
-          echo "java файлов: $(find game/app/src/main/java -name '*.java' | wc -l)"
+          cp src/android/AndroidManifest.xml game/app/src/main/AndroidManifest.xml
+          echo "java: $(find game/app/src/main/java -name '*.java' | wc -l), assets: $(du -sh game/app/src/main/assets | cut -f1)"
 
       - name: Подпись + сборка APK
         env:
