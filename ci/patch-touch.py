@@ -40,11 +40,10 @@ def main() -> None:
     source = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "ci/touch_layout.rs")
     MODULE.write_text(source.read_text())
     # мост из Compose-слоя: очередь событий и JNI-нативы
-    for name in ("moon_input.rs", "moon_jni.rs"):
+    for name in ("moon_input.rs",):
         src = pathlib.Path("ci") / name
         if src.is_file():
             body = src.read_text()
-            # edition 2024: атрибут обязан быть unsafe(...)
             body = body.replace("\n#[no_mangle]\n", "\n#[unsafe(no_mangle)]\n")
             (CLIENT / name).write_text(body)
             print(f"{name}: установлен")
@@ -96,9 +95,54 @@ def main() -> None:
         if "mod moon_input;" not in root:
             anchor = next((l for l in root.splitlines() if l.strip().startswith("mod ")), None)
             if anchor:
-                root = root.replace(anchor, anchor + "\nmod moon_input;\nmod moon_jni;", 1)
+                root = root.replace(anchor, anchor + "\nmod moon_input;", 1)
                 ROOT.write_text(root)
-                print("android.rs: подключён мост moon_input/moon_jni")
+                jni = """
+
+// MoonMC: JNI-точки входа из Compose-слоя управления (см. moon_input).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_moonmc_game_Native_key(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    code: jni::sys::jint,
+    pressed: jni::sys::jboolean,
+) {
+    crate::moon_input::push(crate::moon_input::Event::Key(code, pressed != 0));
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_moonmc_game_Native_mouse(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    button: jni::sys::jint,
+    pressed: jni::sys::jboolean,
+) {
+    crate::moon_input::push(crate::moon_input::Event::Mouse(button, pressed != 0));
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_moonmc_game_Native_stick(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    x: jni::sys::jfloat,
+    y: jni::sys::jfloat,
+) {
+    crate::moon_input::push(crate::moon_input::Event::Stick(x, y));
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_moonmc_game_Native_hotbar(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    slot: jni::sys::jint,
+) {
+    crate::moon_input::push(crate::moon_input::Event::Mouse(-100 - slot, true));
+}
+"""
+                if "Java_dev_moonmc_game_Native_key" not in root:
+                    root = root + jni
+                    ROOT.write_text(root)
+                print("android.rs: JNI-функции моста добавлены")
 
     # разбор очереди в кадре тач-слоя
     text = TOUCH.read_text()
