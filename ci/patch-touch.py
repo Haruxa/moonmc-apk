@@ -471,8 +471,7 @@ def main() -> None:
     if clip.is_file():
         body = clip.read_text()
         if "ALTGR_IS_CTRL_ALT" not in body:
-            body += """
-/// Windows names AltGr Ctrl+Alt; everywhere else it is its own modifier.
+            block = """/// Windows names AltGr Ctrl+Alt; everywhere else it is its own modifier.
 pub const ALTGR_IS_CTRL_ALT: bool = cfg!(windows);
 
 /// Whether this modifier state produces a character (`KeyboardHandler.charTyped`).
@@ -480,7 +479,13 @@ pub fn types_text(edit_modifier: bool, alt: bool, altgr_is_ctrl_alt: bool) -> bo
     let altgr = altgr_is_ctrl_alt && alt;
     !(edit_modifier || (alt && !altgr))
 }
+
 """
+            # важно: до #[cfg(test)], иначе элементы окажутся внутри тестового модуля
+            if "#[cfg(test)]" in body:
+                body = body.replace("#[cfg(test)]", block + "#[cfg(test)]", 1)
+            else:
+                body = body + "\n" + block
             clip.write_text(body)
             print("clipboard: добавил types_text/ALTGR_IS_CTRL_ALT")
     if ERRORS:
