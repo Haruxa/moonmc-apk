@@ -39,6 +39,11 @@ def replace(text: str, old: str, new: str, what: str) -> str:
 def main() -> None:
     source = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "ci/touch_layout.rs")
     MODULE.write_text(source.read_text())
+    # мост из Compose-слоя: очередь событий и JNI-нативы
+    for name in ("moon_input.rs", "moon_jni.rs"):
+        src = pathlib.Path("ci") / name
+        if src.is_file():
+            (CLIENT / name).write_text(src.read_text())
     # Оверлей профилей убран: управление — только тач-слой порта (боевой режим).
 
     # 1. Регистрация модуля рядом с `mod touch;` (в новых пинах её нет — добавляем).
@@ -80,8 +85,66 @@ def main() -> None:
             GAME.write_text(mod)
 
     # 0a. Поля и вызовы тач-слоя в game.rs: порт держит их в Game.
-    gtext = GAME.read_text()
-    if "touch: touch::Touch," not in gtext:
+    # модули моста объявляются в корне крейта (android.rs)
+    ROOT = CLIENT / "android.rs"
+    if ROOT.is_file():
+        root = ROOT.read_text()
+        if "mod moon_input;" not in root:
+            anchor = next((l for l in root.splitlines() if l.strip().startswith("mod ")), None)
+            if anchor:
+                root = root.replace(anchor, anchor + "\nmod moon_input;\nmod moon_jni;", 1)
+                ROOT.write_text(root)
+                print("android.rs: подключён мост moon_input/moon_jni")
+
+    # разбор очереди в кадре тач-слоя
+    text = TOUCH.read_text()
+    if "moon_input::drain()" not in text:
+        anchor = "    pub(super) fn touch_frame(&mut self, event_loop: &ActiveEventLoop) {"
+        if anchor in text:
+            body = anchor + """
+
+        for event in crate::moon_input::drain() {
+            use crate::moon_input::Event;
+            match event {
+                Event::Key(code, pressed) => {
+                    if let Some(key) = crate::moon_input::key_of(code) {
+                        if pressed {
+                            self.keys.insert(key);
+                        } else {
+                            self.keys.remove(&key);
+                        }
+                    }
+                }
+                Event::Mouse(button, pressed) => {
+                    if button < 0 {
+                        self.selected = (-button - 100).clamp(0, 8) as usize;
+                    } else if pressed {
+                        if button == 0 {
+                            self.touch.attack_pulse = true;
+                        } else {
+                            self.touch.use_pulse = true;
+                        }
+                    }
+                }
+                Event::Stick(x, y) => {
+                    for (key, on) in [
+                        (KeyCode::KeyW, y < -0.3),
+                        (KeyCode::KeyS, y > 0.3),
+                        (KeyCode::KeyA, x < -0.3),
+                        (KeyCode::KeyD, x > 0.3),
+                    ] {
+                        if on {
+                            self.keys.insert(key);
+                        } else {
+                            self.keys.remove(&key);
+                        }
+                    }
+                }
+            }
+        }"""
+            text = text.replace(anchor, body, 1)
+            TOUCH.write_text(text)
+            print("touch.rs: очередь моста разбирается в кадре")
         anchor = "    mods: mods::ModsState,"
         if anchor in gtext:
             gtext = gtext.replace(

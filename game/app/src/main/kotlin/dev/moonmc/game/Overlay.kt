@@ -87,11 +87,15 @@ object Overlay {
 
         val handler = remember {
             EventHandler { event: ClickEvent, pressed: Boolean ->
-                // Мост в движок: пока логируем, дальше — JNI (см. android.rs).
-                android.util.Log.i(
-                    "MoonOverlay",
-                    "control ${event.key} ${event.type} pressed=$pressed",
-                )
+                // Событие их слоя → GLFW-код → JNI в движок.
+                val code = runCatching {
+                    com.movtery.inputmap.keycodes.ControlEventKeycode.getKeycodeFromEvent(event.key)
+                }.getOrNull()
+                if (code != null) {
+                    Native.key(code.toInt(), pressed)
+                } else if (pressed && !event.key.isNullOrBlank()) {
+                    android.util.Log.i("MoonOverlay", "неизвестный control: ${event.key}")
+                }
             }
         }
 
