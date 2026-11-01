@@ -383,7 +383,7 @@ def main() -> None:
                 touch_layout::write_bedrock();
                 touch_menu::refresh();
             }
-            Act::Toggle | Act::Close | Act::Page(_) => {}
+            Act::Toggle | Act::Close | Act::Scroll(_) => {}
         }
     }
 
