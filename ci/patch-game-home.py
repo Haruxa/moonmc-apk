@@ -328,12 +328,26 @@ def patch_jre_bits() -> None:
     old = """    // Horizon's exporters (sources, classes, research-lock.json): every start, they are small."""
     new = """    // MoonMC: права JRE — на случай, если APK не сохранил биты исполнения.
     ensure_executable(jre);
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let java = jre.join("bin/java");
+        let mode = std::fs::metadata(&java).map(|m| m.permissions().mode());
+        let link = std::fs::read_link(&java).ok();
+        log(&format!(
+            "Java: {} mode={:o} link={:?} exists={}",
+            java.display(),
+            mode.unwrap_or(0),
+            link,
+            java.exists()
+        ));
+    }
 
     // Horizon's exporters (sources, classes, research-lock.json): every start, they are small."""
     helper = """
 /// Ставит права на файлы JRE: `bin/*` — исполняемые, остальное — читаемые.
 fn ensure_executable(jre: &Path) {
     use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(jre, std::fs::Permissions::from_mode(0o755));
     let mut stack = vec![jre.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -343,14 +357,17 @@ fn ensure_executable(jre: &Path) {
             let path = entry.path();
             let Ok(kind) = entry.file_type() else { continue };
             if kind.is_dir() {
+                // каталогам тоже нужен поиск (x), иначе execve внутри даёт EACCES
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
                 stack.push(path);
                 continue;
             }
             let in_bin = path
                 .components()
                 .any(|part| part.as_os_str() == "bin");
-            let mode = if in_bin { 0o755 } else { 0o644 };
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode));
+            // JRE: исполняемыми делаем все файлы — дешевле, чем угадывать раскладку
+            // (bin/java может быть ссылкой на файл в lib/).
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
         }
     }
 }
