@@ -82,18 +82,31 @@ object Overlay {
     private fun gameDir(name: String) = File("/sdcard/MoonMC/horizon", name)
 
     /** Раскладка: своя из папки игры, иначе встроенная из assets. */
-    private fun readLayout(activity: Activity): ObservableControlLayout {
+    private fun readLayout(activity: Activity): ObservableControlLayout? {
         val text = runCatching {
             val own = gameDir(LAYOUT_DIR).let { dir ->
                 dir.listFiles { f -> f.name.endsWith(".json") }?.sortedBy { it.name }?.firstOrNull()
             }
             own?.readText() ?: activity.assets.open("default_layout.json")
                 .bufferedReader().use { it.readText() }
-        }.getOrElse { "{}" }
-        val layout = runCatching { loadLayoutFromString(text) }.getOrElse {
-            loadLayoutFromString(activity.assets.open("default_layout.json")
-                .bufferedReader().use { it.readText() })
-        }
+        }.getOrNull() ?: return null
+        val layout = runCatching { loadLayoutFromString(text) }
+            .recoverCatching {
+                // битая своя раскладка — берём встроенную
+                loadLayoutFromString(
+                    activity.assets.open("default_layout.json")
+                        .bufferedReader().use { it.readText() },
+                )
+            }
+            .getOrElse { error ->
+                // слой не должен валить игру: покажем текст ошибки в углу
+                runCatching {
+                    gameDir("moonmc-overlay.txt").writeText(
+                        "layout: " + error.stackTraceToString(),
+                    )
+                }
+                return null
+            }
         return ObservableControlLayout(layout)
     }
 
