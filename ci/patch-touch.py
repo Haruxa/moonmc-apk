@@ -58,7 +58,7 @@ def main() -> None:
             ERRORS.append("game.rs: некуда поставить `mod touch;`")
             anchor = ""
         else:
-            mod = mod.replace(host, host + "\nmod touch;", 1)
+            mod = mod.replace(host, host + "\nmod touch;\nmod touch_camera;", 1)
             GAME.write_text(mod)
             mod = GAME.read_text()
             anchor = "mod touch;"
@@ -81,6 +81,54 @@ def main() -> None:
             visibility = anchor_line.strip().split("mod ")[0]
             mod = mod.replace(anchor_line, f"{anchor_line}\n{indent}{visibility}mod touch_menu;", 1)
             GAME.write_text(mod)
+
+    # 0a. Поля и вызовы тач-слоя в game.rs: порт держит их в Game.
+    gtext = GAME.read_text()
+    if "touch: touch::Touch," not in gtext:
+        anchor = "    mods: mods::ModsState,"
+        if anchor in gtext:
+            gtext = gtext.replace(
+                anchor,
+                anchor
+                + "\n    /// MoonMC: наэкранное управление и его камера.\n    touch: touch::Touch,"
+                + "\n    touch_camera: touch_camera::Camera,",
+                1,
+            )
+            GAME.write_text(gtext)
+            print("game.rs: поля touch/touch_camera")
+        else:
+            ERRORS.append("game.rs: нет поля mods для вставки touch")
+    gtext = GAME.read_text()
+    if "touch: Default::default()," not in gtext:
+        anchor = "            mods: Default::default(),"
+        if anchor in gtext:
+            gtext = gtext.replace(
+                anchor,
+                anchor + "\n            touch: Default::default(),\n            touch_camera: Default::default(),",
+                1,
+            )
+            GAME.write_text(gtext)
+            print("game.rs: инициализация touch")
+        else:
+            ERRORS.append("game.rs: нет инициализации mods")
+    gtext = GAME.read_text()
+    if "self.draw_touch(" not in gtext:
+        anchor = "            self.draw_extras(&mut batch);"
+        if anchor in gtext:
+            gtext = gtext.replace(anchor, anchor + "\n            self.draw_touch(&mut batch);", 1)
+            GAME.write_text(gtext)
+            print("game.rs: рисуем тач-слой")
+        else:
+            ERRORS.append("game.rs: нет вызова draw_extras")
+    gtext = GAME.read_text()
+    if "self.touch_frame(event_loop);" not in gtext:
+        anchor = "    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {"
+        if anchor in gtext:
+            gtext = gtext.replace(anchor, anchor + "\n        self.touch_frame(event_loop);", 1)
+            GAME.write_text(gtext)
+            print("game.rs: кадр тач-слоя в about_to_wait")
+        else:
+            ERRORS.append("game.rs: нет about_to_wait")
 
     # 0. Касания и «назад»: при переносе порта на новый пин cherry-pick оставляет
     # window_event от движка (в нём нет WindowEvent::Touch), и тапы не доходят до игры.
