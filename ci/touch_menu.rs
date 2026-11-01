@@ -131,11 +131,11 @@ fn rects(w: f32, h: f32) -> Rects {
     let ph = 34.0;
     let pill = (14.0, 12.0, pw, ph);
 
-    let width = (w * 0.42).clamp(280.0, 400.0);
+    let width = (w * 0.46).clamp(300.0, 430.0);
     let row = 32.0;
     let header = 62.0;
     let footer = 38.0;
-    let height = (header + row * ROWS as f32 + footer).min(h - 90.0);
+    let height = (header + row * ROWS as f32 + footer).min(h * 0.78);
     let panel = (14.0, 54.0, width, height);
 
     let mut rows = Vec::with_capacity(ROWS);
@@ -169,8 +169,10 @@ pub(super) fn draw(batch: &mut HudBatch, atlas: &HudAtlas, w: f32, h: f32, tap_m
         (ui.open, ui.names.clone(), ui.active.clone(), ui.scroll)
     };
 
-    // кнопка-капелька с шестерёнкой
-    round_rect(batch, atlas, r.pill, 16.0, PANEL);
+    // кнопка-капелька с шестерёнкой: тень, корпус, блик
+    round_rect(batch, atlas, (r.pill.0, r.pill.1 + 2.0, r.pill.2, r.pill.3), 17.0, 0x5000_0000);
+    round_rect(batch, atlas, r.pill, 17.0, PANEL);
+    round_rect(batch, atlas, (r.pill.0 + 3.0, r.pill.1 + 2.0, r.pill.2 - 6.0, 2.0), 1.0, 0x30FF_FFFF);
     gear(
         batch,
         atlas,
@@ -184,17 +186,48 @@ pub(super) fn draw(batch: &mut HudBatch, atlas: &HudAtlas, w: f32, h: f32, tap_m
     }
 
     round_rect(batch, atlas, r.panel, 20.0, PANEL);
-    label(batch, atlas, "Controls", r.panel.0 + 12.0, r.panel.1 + 10.0, MINT);
+    label(batch, atlas, "CONTROLS", r.panel.0 + 14.0, r.panel.1 + 10.0, MINT);
+    round_rect(
+        batch,
+        atlas,
+        (r.panel.0 + 12.0, r.panel.1 + 24.0, r.panel.2 - 24.0, 1.0),
+        0.5,
+        0x24FF_FFFF,
+    );
 
     // сегмент режима
     round_rect(batch, atlas, r.mode, 12.0, FILL);
+    let half = (r.mode.2 - 6.0) / 2.0;
+    // левая половина — Aim, правая — Tap; активная залита мятным
+    round_rect(
+        batch,
+        atlas,
+        (r.mode.0, r.mode.1, half, r.mode.3),
+        12.0,
+        if tap_mode { FILL } else { MINT_DIM },
+    );
+    round_rect(
+        batch,
+        atlas,
+        (r.mode.0 + half + 6.0, r.mode.1, half, r.mode.3),
+        12.0,
+        if tap_mode { MINT_DIM } else { FILL },
+    );
     label_centred(
         batch,
         atlas,
-        if tap_mode { "Tap mode — tap to switch" } else { "Aim mode — tap to switch" },
-        r.mode.0 + r.mode.2 / 2.0,
+        "Aim",
+        r.mode.0 + half / 2.0,
         r.mode.1 + 6.0,
-        TEXT,
+        if tap_mode { DIM } else { MINT },
+    );
+    label_centred(
+        batch,
+        atlas,
+        "Tap",
+        r.mode.0 + half + 6.0 + half / 2.0,
+        r.mode.1 + 6.0,
+        if tap_mode { MINT } else { DIM },
     );
 
     for (i, slot) in r.rows.iter().enumerate() {
@@ -207,12 +240,22 @@ pub(super) fn draw(batch: &mut HudBatch, atlas: &HudAtlas, w: f32, h: f32, tap_m
             if is_active { 12.0 } else { 12.0 },
             if is_active { MINT_DIM } else { FILL },
         );
-        let text = if is_active { format!("* {name}") } else { name.clone() };
+        if is_active {
+            round_rect(batch, atlas, (slot.0 + 2.0, slot.1 + 6.0, 3.0, slot.3 - 12.0), 1.5, MINT);
+        }
+        // «радио»: квадратик, у активного — залит
+        round_rect(
+            batch,
+            atlas,
+            (slot.0 + 12.0, slot.1 + slot.3 / 2.0 - 4.0, 8.0, 8.0),
+            4.0,
+            if is_active { MINT } else { 0x40FF_FFFF },
+        );
         label(
             batch,
             atlas,
-            &text,
-            slot.0 + 10.0,
+            name,
+            slot.0 + 26.0,
             slot.1 + 8.0,
             if is_active { MINT } else { TEXT },
         );
