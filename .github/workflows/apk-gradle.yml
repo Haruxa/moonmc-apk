@@ -110,7 +110,10 @@ jobs:
       - name: Разложить в Gradle-проект
         run: |
           mkdir -p game/app/src/main/jniLibs/arm64-v8a
-          cp src/android/out/stage/lib/arm64-v8a/libhorizon.so game/app/src/main/jniLibs/arm64-v8a/
+          # ВАЖНО: копируем ВСЕ библиотеки: libhorizon.so, шимы libhorizonjava/javac.so
+          # и libc++_shared.so (без неё java не линкуется: "library not found").
+          cp -a src/android/out/stage/lib/arm64-v8a/. game/app/src/main/jniLibs/arm64-v8a/
+          ls -l game/app/src/main/jniLibs/arm64-v8a/
           rm -rf game/app/src/main/res game/app/src/main/assets game/app/src/main/java
           mkdir -p game/app/src/main/res game/app/src/main/assets game/app/src/main/java
           cp -a src/android/res/. game/app/src/main/res/
