@@ -1,0 +1,84 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
+}
+
+/** Ключ подписи кладёт CI: путь и пароль приходят переменными. */
+val keystorePath: String? = System.getenv("MOON_KEYSTORE")
+val keystorePass: String? = System.getenv("MOON_KEYSTORE_PASS")
+
+android {
+    namespace = "dev.moonmc.moonmc"
+    compileSdk = 37
+
+    defaultConfig {
+        applicationId = "dev.moonmc.moonmc"
+        minSdk = 29
+        targetSdk = 35
+        versionCode = 100
+        versionName = "1.0.0"
+        ndk { abiFilters += "arm64-v8a" }
+    }
+
+    sourceSets["main"].apply {
+        // Java-исходники, res и assets готовит CI из дерева движка
+        java.srcDirs("src/main/java")
+        jniLibs.srcDirs("src/main/jniLibs")
+        assets.srcDirs("src/main/assets")
+        res.srcDirs("src/main/res")
+    }
+
+    signingConfigs {
+        if (keystorePath != null && keystorePass != null) {
+            create("ci") {
+                storeFile = file(keystorePath)
+                storePassword = keystorePass
+                keyAlias = "horizon"
+                keyPassword = keystorePass
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("ci")
+        }
+        debug {
+            signingConfig = signingConfigs.findByName("ci")
+        }
+    }
+
+    buildFeatures {
+        compose = true
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs.useLegacyPackaging = true
+        resources.excludes += setOf("META-INF/*.kotlin_module", "META-INF/LICENSE*")
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
+dependencies {
+    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
+    implementation(composeBom)
+    implementation("androidx.core:core-ktx:1.17.0")
+    implementation("androidx.activity:activity-compose:1.12.0")
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
+}

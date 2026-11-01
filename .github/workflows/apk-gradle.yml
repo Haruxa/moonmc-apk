@@ -1,0 +1,115 @@
+# MoonMC: сборка APK игры через Gradle (Kotlin + Compose) — путь для игрового
+# Compose-слоя (управление и настройки в духе Zalith Launcher 2).
+# Нативная часть (Rust) и ассеты готовятся теми же скриптами, что и в apk.yml.
+name: apk-gradle
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Профиль cargo"
+        type: choice
+        options: [fast, release]
+        default: fast
+      native_pin:
+        description: "Пин движка"
+        required: true
+        default: "a46ce6898bd72016e061aaec1afc1375b384deac"
+      mixins_rev:
+        description: "Ревизия horizon-mixins"
+        required: false
+        default: "3f99a5c60dfa311cc365524c44ae2fd799bfa1de"
+      native_mods:
+        description: "Бандлы .hnmod через запятую (none = без модов)"
+        required: false
+        default: "fps_overlay"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Окружение
+        run: |
+          echo "NDK=${ANDROID_NDK_LATEST_HOME:-}"; java -version 2>&1 | head -2
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/az || true
+          df -h /
+
+      - name: "Дерево: пин движка + снимок Android-порта"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git clone -q https://github.com/horizon-rust/horizon src
+          cd src
+          git fetch -q --depth 1 origin "${{ inputs.native_pin }}"
+          git checkout -q FETCH_HEAD
+          echo "${{ inputs.native_pin }}" > .horizon-revision
+          gh api "repos/${{ github.repository }}/contents/ci/port/port.tgz?ref=${{ github.sha }}" \
+            -H "Accept: application/vnd.github.raw" > /tmp/port.tgz
+          tar xzf /tmp/port.tgz -C .
+          echo "== дерево: $(git rev-parse --short HEAD), порт: $(git status --porcelain | wc -l) файлов"
+
+      - name: Rust
+        run: |
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+          . "$HOME/.cargo/env"; rustc -V
+
+      - name: "Патчи: папка игры, брендинг, пакет, тач"
+        working-directory: src
+        run: |
+          python3 ci/patch-game-home.py
+          python3 ci/patch-branding.py
+          python3 ci/patch-package.py
+          python3 ci/patch-touch.py ci/touch_layout.rs ci/touch_menu.rs || true
+
+      - name: Собрать libhorizon.so
+        working-directory: src
+        run: |
+          . "$HOME/.cargo/env"
+          cargo build --profile "${{ inputs.profile }}" --target aarch64-linux-android \
+            -p horizon-android --features mods
+          ls -lh target/aarch64-linux-android/${{ inputs.profile }}/libhorizon.so
+
+      - name: Разложить в Gradle-проект
+        run: |
+          mkdir -p game/app/src/main/{jniLibs/arm64-v8a,java,res,assets}
+          cp src/target/aarch64-linux-android/${{ inputs.profile }}/libhorizon.so \
+             game/app/src/main/jniLibs/arm64-v8a/
+          cp -a src/android/res/. game/app/src/main/res/
+          cp src/android/AndroidManifest.xml game/app/src/main/AndroidManifest.xml
+          cp -a src/android/java/. game/app/src/main/java/
+          find game/app/src/main -maxdepth 2 -type d | head -12
+          echo "java файлов: $(find game/app/src/main/java -name '*.java' | wc -l)"
+
+      - name: Подпись + сборка APK
+        env:
+          MOON_KEYSTORE: ${{ github.workspace }}/game/ci.jks
+          MOON_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
+          CI_KEYSTORE_B64: ${{ secrets.CI_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$CI_KEYSTORE_B64" ]; then
+            printf '%s' "$CI_KEYSTORE_B64" | base64 -d > "$MOON_KEYSTORE"
+          else
+            keytool -genkeypair -keystore "$MOON_KEYSTORE" -alias horizon -keyalg RSA \
+              -keysize 2048 -validity 10000 -storepass "$MOON_KEYSTORE_PASS" \
+              -dname "CN=horizon" >/dev/null 2>&1
+          fi
+          cd game
+          gradle --no-daemon :app:assembleRelease
+
+      - name: Артефакт
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: horizon-apk-gradle
+          path: game/app/build/outputs/apk/release/*.apk
+          if-no-files-found: warn

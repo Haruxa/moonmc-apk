@@ -97,6 +97,16 @@ NEW_KEYBOARD = '''            if (splash != null) {
             if (show) {
                 input.reset();'''
 
+OVERLAY = '''        // MoonMC: игровой Compose-слой (настройки и управление). Через рефлексию,
+        // чтобы сборка без него оставалась рабочей.
+        try {
+            Class.forName("dev.moonmc.game.Overlay")
+                .getMethod("attach", android.app.Activity.class)
+                .invoke(null, this);
+        } catch (Throwable ignored) {
+            // слоя нет — играем без него
+        }'''
+
 OLD_RESTART = '''    public void restart() {
         runOnUiThread(() -> {
 '''
@@ -174,6 +184,13 @@ def main() -> int:
                 print(f"экран загрузки: {name} -> android/java")
 
     code = open(ACTIVITY).read()
+    if "dev.moonmc.game.Overlay" not in code:
+        anchor = "        addContentView(input, new ViewGroup.LayoutParams(1, 1));"
+        if anchor not in code:
+            die("HorizonActivity.java: не нашёл onCreate для слоя управления")
+        code = code.replace(anchor, anchor + "\n" + OVERLAY, 1)
+        open(ACTIVITY, "w").write(code)
+        print("экран: игровой слой подключён")
     if "MoonSplash" in code:
         print("экран загрузки: уже пропатчен")
     else:
