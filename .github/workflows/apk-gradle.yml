@@ -111,6 +111,7 @@ jobs:
           # AGP 9 не принимает <uses-sdk> и package= в манифесте: SDK — в build.gradle,
           # namespace — тоже; вычищаем их при копировании.
           sed -e '/<uses-sdk/d' -e 's/ *package="[^"]*"//' \
+              -e 's/ *android:extractNativeLibs="[^"]*"//' \
             src/android/AndroidManifest.xml > game/app/src/main/AndroidManifest.xml
           head -6 game/app/src/main/AndroidManifest.xml
           echo "java: $(find game/app/src/main/java -name '*.java' | wc -l), assets: $(du -sh game/app/src/main/assets | cut -f1)"
