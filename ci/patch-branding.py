@@ -103,13 +103,30 @@ OVERLAY = '''        // MoonMC: любая необработанная ошиб
             Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
             try {
-                java.io.File dir = new java.io.File("/sdcard/MoonMC/horizon");
-                dir.mkdirs();
                 java.io.StringWriter text = new java.io.StringWriter();
                 error.printStackTrace(new java.io.PrintWriter(text));
-                try (java.io.FileWriter out = new java.io.FileWriter(
-                        new java.io.File(dir, "moonmc-crash.txt"))) {
-                    out.write(thread.getName() + "\\n" + text);
+                String body = thread.getName() + "\\n" + text;
+                // Сначала своя внешняя папка: она доступна без разрешения на все файлы,
+                // потом папка игры (если разрешение уже выдано).
+                boolean written = false;
+                java.io.File dir = getExternalFilesDir(null);
+                if (dir != null) {
+                    dir.mkdirs();
+                    try (java.io.FileWriter out =
+                             new java.io.FileWriter(new java.io.File(dir, "moonmc-crash.txt"))) {
+                        out.write(body);
+                        written = true;
+                    }
+                }
+                java.io.File game = new java.io.File("/sdcard/MoonMC/horizon");
+                if (game.mkdirs() || game.isDirectory()) {
+                    try (java.io.FileWriter out =
+                             new java.io.FileWriter(new java.io.File(game, "moonmc-crash.txt"))) {
+                        if (!written) {
+                            out.write(body);
+                        }
+                    } catch (Throwable ignoredCopy) {
+                    }
                 }
             } catch (Throwable ignoredWrite) {
                 // писать некуда — молчим

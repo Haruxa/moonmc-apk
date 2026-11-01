@@ -45,8 +45,27 @@ object Overlay {
                 show(activity)
             } catch (t: Throwable) {
                 // Слой не должен ронять игру: пишем причину рядом с игрой.
-                runCatching { gameDir("moonmc-overlay.txt").writeText(t.toString() + "\n" + t.stackTraceToString()) }
+                report(activity, "moonmc-overlay.txt", t.stackTraceToString())
             }
+        }
+    }
+
+    /**
+     * Куда класть отчёты: сначала внешняя папка приложения (доступна без разрешений),
+     * потом папка игры — если разрешение на файлы уже выдано.
+     */
+    private fun report(activity: Activity, name: String, text: String) {
+        runCatching {
+            val dir = activity.getExternalFilesDir(null)
+            if (dir != null) {
+                dir.mkdirs()
+                File(dir, name).writeText(text)
+            }
+        }
+        runCatching {
+            val dir = File("/sdcard/MoonMC/horizon")
+            dir.mkdirs()
+            File(dir, name).writeText(text)
         }
     }
 
@@ -99,12 +118,8 @@ object Overlay {
                 )
             }
             .getOrElse { error ->
-                // слой не должен валить игру: покажем текст ошибки в углу
-                runCatching {
-                    gameDir("moonmc-overlay.txt").writeText(
-                        "layout: " + error.stackTraceToString(),
-                    )
-                }
+                // слой не должен валить игру: пишем причину и работаем без него
+                report(activity, "moonmc-overlay.txt", "layout: " + error.stackTraceToString())
                 return null
             }
         return ObservableControlLayout(layout)
