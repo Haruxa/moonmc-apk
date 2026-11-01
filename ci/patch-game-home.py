@@ -312,39 +312,66 @@ pub(crate) fn native_library_dir() -> Option<String> {
 
 
 def patch_jre_bits() -> None:
-    """Gradle-упаковка APK может не сохранить биты исполнения у JRE.
+    """Права JRE и отчёт о нём.
 
-    `tar::unpack` ставит режимы из архива, но если APK пересобрал ассеты и права
-    потерялись, `jre/bin/java` получается без +x → «Permission denied (os error 13)».
-    Поэтому после распаковки расставляем режимы сами.
+    Gradle-упаковка может не сохранить биты исполнения, а Android может запретить
+    запуск файла из папки данных. Поэтому: ставим 0755 на всё дерево JRE и пишем
+    отчёт `moonmc-jre.txt` в папку игры — по нему видно точную причину отказа.
     """
     path = pathlib.Path("crates/horizon-client/src/android_setup.rs")
     if not path.is_file():
         return
     text = path.read_text()
-    if "ensure_executable" in text:
-        print("android_setup.rs: права JRE уже расставляются")
+    if "moonmc-jre.txt" in text:
+        print("android_setup.rs: права JRE и отчёт уже на месте")
         return
-    old = """    // Horizon's exporters (sources, classes, research-lock.json): every start, they are small."""
-    new = """    // MoonMC: права JRE — на случай, если APK не сохранил биты исполнения.
+    anchor = "    // Horizon's exporters (sources, classes, research-lock.json): every start, they are small."
+    block = """    // MoonMC: права JRE и отчёт о нём (см. patch-game-home.py).
     ensure_executable(jre);
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let java = jre.join("bin/java");
-        let mode = std::fs::metadata(&java).map(|m| m.permissions().mode());
-        let link = std::fs::read_link(&java).ok();
-        log(&format!(
-            "Java: {} mode={:o} link={:?} exists={}",
-            java.display(),
-            mode.unwrap_or(0),
-            link,
-            java.exists()
-        ));
-    }
+    report_jre(home, jre);
 
-    // Horizon's exporters (sources, classes, research-lock.json): every start, they are small."""
+"""
     helper = """
-/// Ставит права на файлы JRE: `bin/*` — исполняемые, остальное — читаемые.
+/// Ставит права на файлы JRE и пишет отчёт о `bin/java` в папку игры.
+fn report_jre(home: &Path, jre: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let java = jre.join("bin/java");
+    let mut report = String::new();
+    report.push_str(&format!("java = {}\n", java.display()));
+    match std::fs::symlink_metadata(&java) {
+        Ok(meta) => report.push_str(&format!(
+            "symlink_metadata: file={} dir={} mode={:o} len={}\n",
+            meta.file_type().is_file(),
+            meta.file_type().is_dir(),
+            meta.permissions().mode(),
+            meta.len()
+        )),
+        Err(e) => report.push_str(&format!("symlink_metadata: error {e}\n")),
+    }
+    report.push_str(&format!("exists = {}\n", java.exists()));
+    report.push_str(&format!("read_link = {:?}\n", std::fs::read_link(&java)));
+    match std::process::Command::new(&java).arg("-version").output() {
+        Ok(out) => report.push_str(&format!(
+            "run: code {:?}, stderr: {}\n",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr).lines().next().unwrap_or("")
+        )),
+        Err(e) => report.push_str(&format!("run: error {e} (kind {:?})\n", e.kind())),
+    }
+    let sh = std::process::Command::new("/system/bin/sh")
+        .arg("-c")
+        .arg(format!("{} -version 2>&1 | head -2", java.display()))
+        .output();
+    match sh {
+        Ok(out) => report.push_str(&format!(
+            "via sh: {}\n",
+            String::from_utf8_lossy(&out.stdout).trim()
+        )),
+        Err(e) => report.push_str(&format!("via sh: error {e}\n")),
+    }
+    let _ = std::fs::write(home.join("moonmc-jre.txt"), &report);
+}
+
 fn ensure_executable(jre: &Path) {
     use std::os::unix::fs::PermissionsExt;
     let _ = std::fs::set_permissions(jre, std::fs::Permissions::from_mode(0o755));
@@ -357,16 +384,10 @@ fn ensure_executable(jre: &Path) {
             let path = entry.path();
             let Ok(kind) = entry.file_type() else { continue };
             if kind.is_dir() {
-                // каталогам тоже нужен поиск (x), иначе execve внутри даёт EACCES
                 let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
                 stack.push(path);
                 continue;
             }
-            let in_bin = path
-                .components()
-                .any(|part| part.as_os_str() == "bin");
-            // JRE: исполняемыми делаем все файлы — дешевле, чем угадывать раскладку
-            // (bin/java может быть ссылкой на файл в lib/).
             let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
         }
     }
@@ -374,13 +395,13 @@ fn ensure_executable(jre: &Path) {
 
 fn setup(
     home: &Path,"""
-    if old in text:
-        text = text.replace(old, new, 1)
-        text = text.replace("\nfn setup(\n    home: &Path,", helper, 1)
-        path.write_text(text)
-        print("android_setup.rs: права JRE расставляются после распаковки")
-    else:
-        print("::warning::android_setup.rs: не нашёл место для ensure_executable")
+    if anchor not in text:
+        print("::warning::android_setup.rs: не нашёл место для отчёта JRE")
+        return
+    text = text.replace(anchor, block + anchor, 1)
+    text = text.replace("\nfn setup(\n    home: &Path,", helper, 1)
+    path.write_text(text)
+    print("android_setup.rs: права JRE + отчёт moonmc-jre.txt")
 
 
 # Ребрендинг: старые пути и подписи «MargyMC» -> «MoonMC» (в том числе /sdcard/MoonMC/minecraft).
