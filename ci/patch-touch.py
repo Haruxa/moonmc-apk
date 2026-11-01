@@ -43,7 +43,11 @@ def main() -> None:
     for name in ("moon_input.rs", "moon_jni.rs"):
         src = pathlib.Path("ci") / name
         if src.is_file():
-            (CLIENT / name).write_text(src.read_text())
+            body = src.read_text()
+            # edition 2024: атрибут обязан быть unsafe(...)
+            body = body.replace("\n#[no_mangle]\n", "\n#[unsafe(no_mangle)]\n")
+            (CLIENT / name).write_text(body)
+            print(f"{name}: установлен")
     # Оверлей профилей убран: управление — только тач-слой порта (боевой режим).
 
     # 1. Регистрация модуля рядом с `mod touch;` (в новых пинах её нет — добавляем).
