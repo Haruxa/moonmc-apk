@@ -145,6 +145,9 @@ def main() -> None:
             text = text.replace(anchor, body, 1)
             TOUCH.write_text(text)
             print("touch.rs: очередь моста разбирается в кадре")
+
+    gtext = GAME.read_text()
+    if "touch: touch::Touch," not in gtext:
         anchor = "    mods: mods::ModsState,"
         if anchor in gtext:
             gtext = gtext.replace(
