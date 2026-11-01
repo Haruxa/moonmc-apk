@@ -137,8 +137,12 @@ OVERLAY = '''        // MoonMC: любая необработанная ошиб
         });
 
         // MoonMC: игровой Compose-слой (настройки и управление). Через рефлексию,
-        // чтобы сборка без него оставалась рабочей.
-        try {
+        // чтобы сборка без него оставалась рабочей. Файл moonmc-layer-off.txt
+        // в папке игры полностью выключает слой — запасной выход при крашах.
+        boolean layerOff = new java.io.File(
+            getExternalFilesDir(null), "moonmc-layer-off.txt").exists()
+            || new java.io.File("/sdcard/MoonMC/horizon/moonmc-layer-off.txt").exists();
+        if (!layerOff) try {
             Class<?> layer = Class.forName("dev.moonmc.game.Overlay");
             java.lang.reflect.Method attach =
                 layer.getMethod("attach", android.app.Activity.class);
