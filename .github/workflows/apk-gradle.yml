@@ -100,7 +100,7 @@ jobs:
           tail -15 /tmp/build.log
           if [ $status -ne 0 ]; then
             echo "== ошибки сборки:"
-            grep -n "error" /tmp/build.log | head -30
+            grep -n -A4 "error" /tmp/build.log | head -60
             echo "== хвост сборки:"
             tail -40 /tmp/build.log
             exit $status
