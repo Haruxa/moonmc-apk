@@ -58,6 +58,13 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // Игра собирается целиком из подготовленного дерева (java/res/assets от движка),
+    // поэтому релизный lint не должен валить сборку.
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
+
     packaging {
         jniLibs.useLegacyPackaging = true
         resources.excludes += setOf("META-INF/*.kotlin_module", "META-INF/LICENSE*")
