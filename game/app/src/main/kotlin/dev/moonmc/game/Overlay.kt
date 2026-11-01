@@ -101,7 +101,9 @@ object Overlay {
                 eventHandler = handler,
                 isCursorGrabbing = false,
                 checkOccupiedPointers = { false },
-            )
+            ) {
+                // мир под контролами: их слой рисует только кнопки и джойстик
+            }
 
             // шестерня: панель настроек
             Surface(
