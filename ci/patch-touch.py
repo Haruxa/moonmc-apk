@@ -254,6 +254,15 @@ def main() -> None:
     )
 
     # 9. Отрисовка дополнительных контролов.
+    # 11a0. Импорт модуля оверлея.
+    if "use super::touch_menu;" not in text:
+        text = replace(
+            text,
+            "use super::touch_layout::{self, Action};",
+            "use super::touch_layout::{self, Action};\nuse super::touch_menu;",
+            "импорт touch_menu",
+        )
+
     # 11a. Оверлей профилей: виден и в мире, и в меню.
     text = replace(
         text,
