@@ -49,6 +49,12 @@ android {
         }
     }
 
+    androidResources {
+        // JRE и экспортёры лежат в assets как есть: те же архивы, что и в старой
+        // aapt2-сборке (там они тоже были несжатыми). Сжатие ломало распаковку.
+        noCompress += listOf("xz", "tar.xz", "zip", "json")
+    }
+
     buildFeatures {
         compose = true
     }
