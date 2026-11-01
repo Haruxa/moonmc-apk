@@ -7,7 +7,8 @@ work, and this file says whose.
 
 <https://github.com/horizon-rust/horizon>
 
-MIT License, Copyright (c) 2026 Ludovic Marie and the Horizon contributors.
+MIT License, Copyright (c) 2026 Ludovic Marie and the Horizon contributors
+  (MoonMC itself is GPL-3.0; Horizon is used as a build dependency under its MIT terms).
 
 MoonMC builds Horizon at a pinned commit (`native_pin`) and applies the Android port on top of it.
 
@@ -17,7 +18,7 @@ MoonMC builds Horizon at a pinned commit (`native_pin`) and applies the Android 
 
 MIT License, by **narezany** — the original author of the Android port (`java/`,
 `crates/horizon-android`, the `/sdcard` game folder layout and the launcher-side JRE) that MoonMC
-is based on. MoonMC keeps the MIT license and adds the rebranding patches in `ci/`.
+is based on. MoonMC adds the rebranding and touch patches in `ci/` and is licensed GPL-3.0.
 
 ## Google Material Design Icons
 
