@@ -354,11 +354,27 @@ jobs:
           restore-keys: |
             modcheck-${{ inputs.source_ref }}-
 
-      - name: Забрать exporters из job prepare
-        uses: actions/download-artifact@v4
-        with:
-          name: exporters
-          path: ${{ runner.temp }}
+      # exporters берём из текущего прогона, а если prepare их не собрал
+      # (нет исходников/Minecraft) — из последней удачной сборки.
+      - name: Забрать exporters
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="${{ github.repository }}"
+          mkdir -p "$RUNNER_TEMP"
+          id=$(gh api "repos/$REPO/actions/runs/${{ github.run_id }}/artifacts" \
+                 --jq '[.artifacts[] | select(.name == "exporters" and .expired == false)][0].id // ""' || true)
+          if [ -z "$id" ]; then
+            echo "::warning::в этом прогоне exporters нет — беру из прошлой сборки"
+            id=$(gh api "repos/$REPO/actions/artifacts?name=exporters&per_page=50" \
+                   --jq '[.artifacts[] | select(.expired == false)][0].id // ""' || true)
+          fi
+          test -n "$id" || { echo "::error::нет артефакта exporters"; exit 1; }
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            -o /tmp/exporters.zip "https://api.github.com/repos/$REPO/actions/artifacts/$id/zip"
+          rm -rf /tmp/exporters && unzip -oq /tmp/exporters.zip -d /tmp/exporters
+          find /tmp/exporters -name exporters.tgz -exec cp {} "$RUNNER_TEMP/exporters.tgz" \;
+          ls -lh "$RUNNER_TEMP/exporters.tgz"
 
       - name: Распаковать exporters
         working-directory: src
