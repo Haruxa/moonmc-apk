@@ -332,6 +332,9 @@ def patch_jre_bits() -> None:
 
 """
     helper = """
+/// Отчёт о JRE: показывается в диалоге ошибки подготовки, чтобы не гадать.
+static JRE_REPORT: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
 /// Ставит права на файлы JRE и пишет отчёт о `bin/java` в папку игры.
 fn report_jre(home: &Path, jre: &Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -375,6 +378,9 @@ fn report_jre(home: &Path, jre: &Path) {
         let _ = std::fs::write(public.join("moonmc-jre.txt"), &report);
     }
     let _ = std::fs::write(home.join("moonmc-jre.txt"), &report);
+    if let Ok(mut slot) = JRE_REPORT.lock() {
+        *slot = report.clone();
+    }
 }
 
 fn ensure_executable(jre: &Path) {
