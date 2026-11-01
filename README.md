@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/Haruxa/moonmc-apk/actions/workflows/apk.yml"><img src="https://github.com/Haruxa/moonmc-apk/actions/workflows/apk.yml/badge.svg" alt="apk"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-9BE8BE?style=flat-square" alt="MIT"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-9BE8BE?style=flat-square" alt="GPL-3.0"></a>
   <img src="https://img.shields.io/badge/package-dev.moonmc.moonmc-1F6FEB?style=flat-square" alt="package">
   <img src="https://img.shields.io/badge/Android-10%2B-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Android 10+">
   <img src="https://img.shields.io/badge/ABI-arm64--v8a-555?style=flat-square" alt="arm64-v8a">
@@ -99,5 +99,5 @@ Full list: [NOTICE.md](NOTICE.md).
 
 ## License
 
-[MIT](LICENSE). Not affiliated with, endorsed by or sponsored by Mojang Studios or Microsoft.
+[GPL-3.0](LICENSE). Not affiliated with, endorsed by or sponsored by Mojang Studios or Microsoft.
 Minecraft is a trademark of Mojang Studios.
