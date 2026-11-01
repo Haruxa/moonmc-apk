@@ -217,6 +217,23 @@ def patch_lib_modules() -> None:
         print(f"lib.rs: вернул модули порта: {', '.join(added)}")
 
 
+def patch_workspace() -> None:
+    """Порт — отдельный крейт: добавляем его в members рабочего пространства."""
+    root = pathlib.Path("Cargo.toml")
+    if not root.is_file() or not pathlib.Path("crates/horizon-android").is_dir():
+        return
+    text = root.read_text()
+    if "crates/horizon-android" in text:
+        return
+    match = re.search(r"(?m)^members\s*=\s*\[\n", text)
+    if match is None:
+        print("::warning::в Cargo.toml нет списка members — порт не подключён")
+        return
+    text = text[: match.end()] + '    "crates/horizon-android",\n' + text[match.end():]
+    root.write_text(text)
+    print("Cargo.toml: добавил crates/horizon-android в members")
+
+
 # Ребрендинг: старые пути и подписи «MargyMC» -> «MoonMC» (в том числе /sdcard/MoonMC/minecraft).
 REBRAND = [
     pathlib.Path("crates/horizon-client/src/android_setup.rs"),
@@ -245,6 +262,9 @@ def main() -> int:
             continue
         path.write_text(text.replace(original, patched, 1))
         print(f"{path}: пропатчен")
+    # 2a. Порт как крейт рабочего пространства
+    patch_workspace()
+
     # 2b. Модули порта в lib.rs и фичи порта под этот пин
     patch_lib_modules()
     patch_android_features()
