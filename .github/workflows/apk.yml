@@ -71,20 +71,21 @@ jobs:
                       "$AGENT_TOOLSDIRECTORY" || true
           df -h /
 
-      # Gitea отдаёт архив только части клиентов (403 раннерам), поэтому при отказе
-      # просто клонируем тот же репозиторий.
-      - name: Скачать исходники MargyMC
+      # Исходники для horizon-prepare — это движок (GitHub), порт больше не нужен:
+      # его снимок лежит в ci/port/port.tgz. Нет сети/пина — возьмём готовые exporters.
+      - name: Исходники движка на пине
         run: |
-          SOURCE="${{ inputs.source_url }}"
-          REF="${{ inputs.source_ref }}"
-          if curl -fsSL --retry 3 -o /tmp/s.tgz "$SOURCE/archive/$REF.tar.gz"; then
-            mkdir -p src && tar xzf /tmp/s.tgz -C src --strip-components=1 && rm -f /tmp/s.tgz
+          PIN="${{ inputs.native_pin }}"
+          if [ -z "$PIN" ]; then PIN="${{ inputs.source_ref }}"; fi
+          if git clone -q --depth 1 https://github.com/horizon-rust/horizon src \
+             && (cd src && git fetch -q --depth 1 origin "$PIN" && git checkout -q FETCH_HEAD); then
+            echo "SOURCE_OK=1" >> "$GITHUB_ENV"
+            ls src/research-lock.json
           else
-            echo "::warning::архив $REF недоступен — клонирую $SOURCE"
+            echo "::warning::исходников нет — берём готовые exporters из прошлой сборки"
             rm -rf src
-            git clone -q --depth 1 --branch "$REF" "$SOURCE" src
+            echo "SOURCE_OK=0" >> "$GITHUB_ENV"
           fi
-          ls src/research-lock.json
 
       - name: Rust
         run: |
@@ -109,7 +110,7 @@ jobs:
           key: exporters-${{ inputs.source_ref }}-${{ hashFiles('src/Cargo.lock') }}
 
       - name: JDK 25 (для horizon-prepare)
-        if: steps.ex.outputs.cache-hit != 'true' && env.EXPORTERS_ARTIFACT == ''
+        if: steps.ex.outputs.cache-hit != 'true' && env.EXPORTERS_ARTIFACT == '' && env.SOURCE_OK == '1'
         run: |
           curl -fsSL -o /tmp/jdk25.tgz "https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jdk/hotspot/normal/eclipse"
           mkdir -p "$RUNNER_TEMP/jdk25" && tar xzf /tmp/jdk25.tgz -C "$RUNNER_TEMP/jdk25" --strip-components=1
@@ -167,7 +168,7 @@ jobs:
           echo "EXPORTERS_ARTIFACT=1" >> "$GITHUB_ENV"
 
       - name: horizon-prepare --prepare
-        if: steps.ex.outputs.cache-hit != 'true' && env.EXPORTERS_ARTIFACT == ''
+        if: steps.ex.outputs.cache-hit != 'true' && env.EXPORTERS_ARTIFACT == '' && env.SOURCE_OK == '1'
         working-directory: src
         run: |
           set -o pipefail
@@ -183,14 +184,14 @@ jobs:
           df -h /
 
       - name: Упаковать exporters
-        if: steps.ex.outputs.cache-hit != 'true' && env.EXPORTERS_ARTIFACT == ''
+        if: steps.ex.outputs.cache-hit != 'true' && env.EXPORTERS_ARTIFACT == '' && env.SOURCE_OK == '1'
         working-directory: src
         run: |
           tar czf "$RUNNER_TEMP/exporters.tgz" -C .local exporters
           ls -lh "$RUNNER_TEMP/exporters.tgz"
 
       - name: Артефакт exporters
-        if: env.EXPORTERS_ARTIFACT == ''
+        if: env.EXPORTERS_ARTIFACT == '' && env.SOURCE_OK == '1'
         uses: actions/upload-artifact@v4
         with:
           name: exporters
