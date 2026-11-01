@@ -184,6 +184,15 @@ def patch_android_features() -> None:
     print(f"фичи порта: {current.group(0)} -> {line}")
 
 
+# Ребрендинг: старые пути и подписи «MargyMC» -> «MoonMC» (в том числе /sdcard/MoonMC/minecraft).
+REBRAND = [
+    pathlib.Path("crates/horizon-client/src/android_setup.rs"),
+    pathlib.Path("crates/horizon-client/src/android.rs"),
+    pathlib.Path("crates/horizon-client/src/title.rs"),
+    pathlib.Path("android/AndroidManifest.xml"),
+]
+
+
 PORT_MODULES = ("event_loop", "msa")
 
 
