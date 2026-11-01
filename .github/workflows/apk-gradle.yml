@@ -100,7 +100,9 @@ jobs:
           tail -15 /tmp/build.log
           if [ $status -ne 0 ]; then
             echo "== ошибки сборки:"
-            grep -E "^(error|error\[)" /tmp/build.log | head -20
+            grep -n "error" /tmp/build.log | head -30
+            echo "== хвост сборки:"
+            tail -40 /tmp/build.log
             exit $status
           fi
           ls -l android/out/stage/lib/arm64-v8a/ android/out/assets | head -20
