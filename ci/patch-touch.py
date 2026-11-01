@@ -451,7 +451,38 @@ def main() -> None:
     )
 
 
+    # 12. Совместимость с новыми пинами: чего в них уже нет.
+    text = TOUCH.read_text()
+    # в 10-30 Creative не умеет snap()
+    text = text.replace(
+        "                        if scrolling && self.screen == Screen::Creative {\n"
+        "                            self.creative_screen.snap(&self.pack.names);\n"
+        "                        }\n",
+        "",
+    )
+    # в 10-30 Pads.injected приватный: строку убираем
+    text = text.replace("        self.pad.injected = state;\n", "")
+    # в 10-30 нет held_uses_over_time(): тап-использование идёт обычным путём
+    text = text.replace("} else if self.held_uses_over_time() {", "} else if false {")
     TOUCH.write_text(text)
+
+    # Android-клипборд: движковый game/clipboard.rs ждёт эти два элемента
+    clip = pathlib.Path("crates/horizon-client-input/src/clipboard.rs")
+    if clip.is_file():
+        body = clip.read_text()
+        if "ALTGR_IS_CTRL_ALT" not in body:
+            body += """
+/// Windows names AltGr Ctrl+Alt; everywhere else it is its own modifier.
+pub const ALTGR_IS_CTRL_ALT: bool = cfg!(windows);
+
+/// Whether this modifier state produces a character (`KeyboardHandler.charTyped`).
+pub fn types_text(edit_modifier: bool, alt: bool, altgr_is_ctrl_alt: bool) -> bool {
+    let altgr = altgr_is_ctrl_alt && alt;
+    !(edit_modifier || (alt && !altgr))
+}
+"""
+            clip.write_text(body)
+            print("clipboard: добавил types_text/ALTGR_IS_CTRL_ALT")
     if ERRORS:
         sys.exit("patch-touch: движок не совпал с якорями — " + "; ".join(ERRORS))
     print("patch-touch: профили управления вшиты")
