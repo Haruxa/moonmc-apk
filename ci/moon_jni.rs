@@ -3,7 +3,7 @@ use jni::objects::JClass;
 use jni::sys::{jboolean, jfloat, jint};
 
 /// Клавиша в терминах GLFW (как в InputMap у Zalith).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_moonmc_game_Native_key(
     _env: jni::JNIEnv,
     _class: JClass,
@@ -14,7 +14,7 @@ pub extern "system" fn Java_dev_moonmc_game_Native_key(
 }
 
 /// Кнопка мыши: 0 — левая, 1 — правая.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_moonmc_game_Native_mouse(
     _env: jni::JNIEnv,
     _class: JClass,
@@ -25,7 +25,7 @@ pub extern "system" fn Java_dev_moonmc_game_Native_mouse(
 }
 
 /// Стик джойстика: -1..1 по обеим осям.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_moonmc_game_Native_stick(
     _env: jni::JNIEnv,
     _class: JClass,
@@ -36,7 +36,7 @@ pub extern "system" fn Java_dev_moonmc_game_Native_stick(
 }
 
 /// Хотбар: номер слота 0..8.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_moonmc_game_Native_hotbar(
     _env: jni::JNIEnv,
     _class: JClass,
