@@ -503,6 +503,21 @@ pub extern "system" fn Java_dev_moonmc_game_Native_hotbar(
 
     
 
+    # 11d. EventLoop: конструктор EventLoop::new() на Android паникует
+    # ("An AndroidApp as passed to android_main() is required"). Движок в том же файле
+    # использует свой хелпер — переписываем все вызовы.
+    gtext = GAME.read_text()
+    if "EventLoop::new()" in gtext:
+        gtext = gtext.replace(
+            "winit::event_loop::EventLoop::new()", "horizon_client::event_loop::new()"
+        )
+        gtext = gtext.replace("EventLoop::new()", "horizon_client::event_loop::new()")
+        GAME.write_text(gtext)
+        print("game.rs: EventLoop::new() -> horizon_client::event_loop::new()")
+    left = GAME.read_text().count("EventLoop::new()")
+    if left:
+        ERRORS.append(f"game.rs: осталось {left} вызовов EventLoop::new()")
+
     # 12. Совместимость с новыми пинами: чего в них уже нет.
     text = TOUCH.read_text()
     # в 10-30 Creative не умеет snap()
