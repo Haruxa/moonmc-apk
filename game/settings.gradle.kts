@@ -14,3 +14,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "moonmc-game"
 include(":app")
+include(":inputmap")
+include(":layercontroller")

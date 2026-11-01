@@ -2,10 +2,9 @@ package dev.moonmc.game
 
 import android.app.Activity
 import android.app.Dialog
-import android.view.WindowManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
-import androidx.compose.foundation.background
+import android.view.WindowManager
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -18,24 +17,34 @@ import androidx.compose.ui.graphics.Color as C
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.movtery.layer_controller.ControlBoxLayout
+import com.movtery.layer_controller.event.ClickEvent
+import com.movtery.layer_controller.event.EventHandler
+import com.movtery.layer_controller.layout.loadLayoutFromString
+import com.movtery.layer_controller.observable.ObservableControlLayout
 import java.io.File
 
 /**
- * Игровой слой MoonMC: маленькая «капля» с шестернёй сверху и панель настроек.
+ * Игровой слой MoonMC: контролы из Zalith Launcher 2 (`LayerController`) и панель
+ * настроек под шестернёй.
  *
- * Окно прозрачное и лежит поверх нативной поверхности (та же схема, что у экрана
- * загрузки: обычные view под SurfaceView не видны, окно-диалог — видно).
- * Настройки пишутся в `moonmc/perf.txt` в папке игры и читаются движком при старте.
+ * Окно прозрачное и лежит поверх нативной поверхности (обычные view под SurfaceView
+ * не видны, окно-диалог — видно). Раскладка читается из `touch/zalith/layout.json`
+ * в папке игры; если файла нет — берётся встроенная `assets/default_layout.json`.
+ * Настройки производительности пишутся в `moonmc/perf.txt`.
  */
 object Overlay {
-    private const val FILE = "moonmc/perf.txt"
+    private const val PERF = "moonmc/perf.txt"
+    private const val LAYOUT_DIR = "touch/zalith"
     private var dialog: Dialog? = null
 
     fun attach(activity: Activity) {
         activity.runOnUiThread {
             if (dialog?.isShowing == true) return@runOnUiThread
             val view = ComposeView(activity).apply {
-                setContent { MaterialTheme(colorScheme = darkColorScheme()) { Panel() } }
+                setContent {
+                    MaterialTheme(colorScheme = darkColorScheme()) { Layer(activity) }
+                }
             }
             val d = Dialog(activity, android.R.style.Theme_Material_NoActionBar_Fullscreen)
             d.setContentView(view)
@@ -53,50 +62,48 @@ object Overlay {
         }
     }
 
-    private fun file(activity: Activity): File {
-        val home = File("/sdcard/MoonMC/horizon")
-        return File(home, FILE)
-    }
+    private fun gameDir(name: String) = File("/sdcard/MoonMC/horizon", name)
 
-    private fun read(activity: Activity): Map<String, String> =
-        runCatching {
-            file(activity).readLines()
-                .mapNotNull { line ->
-                    val i = line.indexOf('=')
-                    if (i <= 0) null else line.substring(0, i).trim() to line.substring(i + 1).trim()
-                }
-                .toMap()
-        }.getOrDefault(emptyMap())
-
-    private fun write(activity: Activity, values: Map<String, String>) {
-        runCatching {
-            val f = file(activity)
-            f.parentFile?.mkdirs()
-            f.writeText(values.entries.joinToString("\n") { "${it.key}=${it.value}" } + "\n")
+    /** Раскладка: своя из папки игры, иначе встроенная из assets. */
+    private fun readLayout(activity: Activity): ObservableControlLayout {
+        val text = runCatching {
+            val own = gameDir(LAYOUT_DIR).let { dir ->
+                dir.listFiles { f -> f.name.endsWith(".json") }?.sortedBy { it.name }?.firstOrNull()
+            }
+            own?.readText() ?: activity.assets.open("default_layout.json")
+                .bufferedReader().use { it.readText() }
+        }.getOrElse { "{}" }
+        val layout = runCatching { loadLayoutFromString(text) }.getOrElse {
+            loadLayoutFromString(activity.assets.open("default_layout.json")
+                .bufferedReader().use { it.readText() })
         }
+        return ObservableControlLayout(layout)
     }
 
     @Composable
-    private fun Panel() {
-        val ctx = androidx.compose.ui.platform.LocalContext.current
-        val activity = ctx as? Activity ?: return
+    private fun Layer(activity: Activity) {
+        val layout = remember { readLayout(activity) }
         var opened by remember { mutableStateOf(false) }
-        val saved = remember { read(activity) }
-        var dynamicResolution by remember { mutableStateOf(saved["dynamic_resolution"] ?: "on") }
-        var hdr by remember { mutableStateOf(saved["hdr"] ?: "off") }
-        var fpsCap by remember { mutableStateOf(saved["fps_cap"] ?: "60") }
 
-        fun store() = write(
-            activity,
-            mapOf(
-                "dynamic_resolution" to dynamicResolution,
-                "hdr" to hdr,
-                "fps_cap" to fpsCap,
-            ),
-        )
+        val handler = remember {
+            EventHandler { event: ClickEvent, pressed: Boolean ->
+                // Мост в движок: пока логируем, дальше — JNI (см. android.rs).
+                android.util.Log.i(
+                    "MoonOverlay",
+                    "control ${event.key} ${event.type} pressed=$pressed",
+                )
+            }
+        }
 
         Box(Modifier.fillMaxSize()) {
-            // капля с шестернёй
+            ControlBoxLayout(
+                observedLayout = layout,
+                eventHandler = handler,
+                isCursorGrabbing = false,
+                checkOccupiedPointers = { false },
+            )
+
+            // шестерня: панель настроек
             Surface(
                 modifier = Modifier.padding(12.dp).size(44.dp),
                 shape = RoundedCornerShape(16.dp),
@@ -109,30 +116,59 @@ object Overlay {
             }
 
             if (opened) {
-                Surface(
-                    modifier = Modifier.padding(top = 64.dp, start = 12.dp).width(300.dp),
-                    shape = RoundedCornerShape(24.dp),
-                    color = C(0xF0111418),
-                    tonalElevation = 6.dp,
-                ) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Производительность", color = C(0xFF9BE8BE), fontSize = 16.sp)
-                        Toggle("Динамическое разрешение", dynamicResolution == "on") {
-                            dynamicResolution = if (it) "on" else "off"; store()
-                        }
-                        Toggle("HDR-вывод", hdr == "on") { hdr = if (it) "on" else "off"; store() }
-                        Text("Лимит FPS", color = C(0xFFB9C8CE), fontSize = 12.sp)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf("30", "60", "90", "0").forEach { value ->
-                                FilterChip(
-                                    selected = fpsCap == value,
-                                    onClick = { fpsCap = value; store() },
-                                    label = { Text(if (value == "0") "∞" else value, fontSize = 12.sp) },
-                                )
-                            }
-                        }
+                SettingsPanel(activity) { opened = false }
+            }
+        }
+    }
+
+    @Composable
+    private fun SettingsPanel(activity: Activity, onClose: () -> Unit) {
+        val saved = remember { readPerf(activity) }
+        var dynamicResolution by remember { mutableStateOf(saved["dynamic_resolution"] ?: "on") }
+        var hdr by remember { mutableStateOf(saved["hdr"] ?: "off") }
+        var fpsCap by remember { mutableStateOf(saved["fps_cap"] ?: "60") }
+
+        fun store() = writePerf(
+            activity,
+            mapOf(
+                "dynamic_resolution" to dynamicResolution,
+                "hdr" to hdr,
+                "fps_cap" to fpsCap,
+            ),
+        )
+
+        Surface(
+            modifier = Modifier.padding(top = 64.dp, start = 12.dp).width(320.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = C(0xF0111418),
+            tonalElevation = 6.dp,
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Настройки", color = C(0xFF9BE8BE), fontSize = 16.sp)
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = onClose) { Text("Закрыть", fontSize = 12.sp) }
+                }
+                Text("Производительность", color = C(0xFFB9C8CE), fontSize = 12.sp)
+                Toggle("Динамическое разрешение", dynamicResolution == "on") {
+                    dynamicResolution = if (it) "on" else "off"; store()
+                }
+                Toggle("HDR-вывод", hdr == "on") { hdr = if (it) "on" else "off"; store() }
+                Text("Лимит FPS", color = C(0xFFB9C8CE), fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("30", "60", "90", "0").forEach { value ->
+                        FilterChip(
+                            selected = fpsCap == value,
+                            onClick = { fpsCap = value; store() },
+                            label = { Text(if (value == "0") "∞" else value, fontSize = 12.sp) },
+                        )
                     }
                 }
+                Text(
+                    "Управление — из Zalith Launcher 2: раскладка touch/zalith/layout.json",
+                    color = C(0xFF8CA0A7),
+                    fontSize = 11.sp,
+                )
             }
         }
     }
@@ -146,6 +182,21 @@ object Overlay {
         ) {
             Text(label, color = C(0xFFE8F1EC), fontSize = 13.sp)
             Switch(checked = checked, onCheckedChange = onChange)
+        }
+    }
+
+    private fun readPerf(activity: Activity): Map<String, String> = runCatching {
+        gameDir(PERF).readLines().mapNotNull { line ->
+            val i = line.indexOf('=')
+            if (i <= 0) null else line.substring(0, i).trim() to line.substring(i + 1).trim()
+        }.toMap()
+    }.getOrDefault(emptyMap())
+
+    private fun writePerf(activity: Activity, values: Map<String, String>) {
+        runCatching {
+            val f = gameDir(PERF)
+            f.parentFile?.mkdirs()
+            f.writeText(values.entries.joinToString("\n") { "${it.key}=${it.value}" } + "\n")
         }
     }
 }
