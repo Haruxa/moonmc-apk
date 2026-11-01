@@ -100,6 +100,7 @@ def main() -> None:
                 jni = """
 
 // MoonMC: JNI-точки входа из Compose-слоя управления (см. moon_input).
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_moonmc_game_Native_key(
     _env: jni::JNIEnv,
@@ -110,6 +111,7 @@ pub extern "system" fn Java_dev_moonmc_game_Native_key(
     crate::moon_input::push(crate::moon_input::Event::Key(code, pressed != 0));
 }
 
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_moonmc_game_Native_mouse(
     _env: jni::JNIEnv,
@@ -120,6 +122,7 @@ pub extern "system" fn Java_dev_moonmc_game_Native_mouse(
     crate::moon_input::push(crate::moon_input::Event::Mouse(button, pressed != 0));
 }
 
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_moonmc_game_Native_stick(
     _env: jni::JNIEnv,
@@ -130,6 +133,7 @@ pub extern "system" fn Java_dev_moonmc_game_Native_stick(
     crate::moon_input::push(crate::moon_input::Event::Stick(x, y));
 }
 
+#[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_moonmc_game_Native_hotbar(
     _env: jni::JNIEnv,
