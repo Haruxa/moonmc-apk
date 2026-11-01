@@ -38,6 +38,7 @@ object Overlay {
     private const val LAYOUT_DIR = "touch/zalith"
     private var dialog: Dialog? = null
 
+    @JvmStatic
     fun attach(activity: Activity) {
         activity.runOnUiThread {
             if (dialog?.isShowing == true) return@runOnUiThread

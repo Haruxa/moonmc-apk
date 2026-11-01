@@ -100,9 +100,13 @@ NEW_KEYBOARD = '''            if (splash != null) {
 OVERLAY = '''        // MoonMC: игровой Compose-слой (настройки и управление). Через рефлексию,
         // чтобы сборка без него оставалась рабочей.
         try {
-            Class.forName("dev.moonmc.game.Overlay")
-                .getMethod("attach", android.app.Activity.class)
-                .invoke(null, this);
+            Class<?> layer = Class.forName("dev.moonmc.game.Overlay");
+            java.lang.reflect.Method attach =
+                layer.getMethod("attach", android.app.Activity.class);
+            Object target = java.lang.reflect.Modifier.isStatic(attach.getModifiers())
+                ? null
+                : layer.getField("INSTANCE").get(null);
+            attach.invoke(target, this);
         } catch (Throwable ignored) {
             // слоя нет — играем без него
         }'''
