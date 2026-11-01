@@ -105,6 +105,8 @@ jobs:
           mkdir -p game/app/src/main/res game/app/src/main/assets game/app/src/main/java
           cp -a src/android/res/. game/app/src/main/res/
           cp -a src/android/out/assets/. game/app/src/main/assets/
+          # наша раскладка Zalith лежит вне assets, чтобы не затиралась ассетами движка
+          cp game/app/src/main/layout/default_layout.json game/app/src/main/assets/
           cp -a src/android/java/. game/app/src/main/java/
           # AGP 9 не принимает <uses-sdk> и package= в манифесте: SDK — в build.gradle,
           # namespace — тоже; вычищаем их при копировании.
