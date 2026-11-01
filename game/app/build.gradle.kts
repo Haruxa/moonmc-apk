@@ -74,7 +74,7 @@ android {
     }
 
     packaging {
-        jniLibs.useLegacyPackaging = false
+        jniLibs.useLegacyPackaging = true
         resources.excludes += setOf("META-INF/*.kotlin_module", "META-INF/LICENSE*")
     }
 }
