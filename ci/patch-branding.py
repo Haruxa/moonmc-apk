@@ -95,10 +95,35 @@ NEW_KEYBOARD = '''            if (splash != null) {
                 splash = null;
                 preparing = false;
             }
-            // MoonMC: окно слоя управления прячется, пока клавиатура на экране.
+            // MoonMC: окно слоя не трогаем — по видимости IME его прячет Kotlin-часть.
             OverlayBridge.gameKeyboard(show);
             if (show) {
                 input.reset();'''
+
+# MoonMC: одно соединение на всё время работы. Новое на каждый restartInput давало
+# клавиатуре вторую «копию» набранного, и удалённые символы возвращались при наборе.
+OLD_CONNECTION = '''            connection = new Connection(this);
+            return connection;'''
+
+NEW_CONNECTION = '''            if (connection == null) {
+                connection = new Connection(this);
+            }
+            return connection;'''
+
+# MoonMC: «готово/отправить» и Enter сначала отдают игре набранное, потом жмут Enter.
+OLD_SUBMIT = '''                if (code == KeyEvent.KEYCODE_ENTER) {
+                    nativeKey(KeyEvent.KEYCODE_ENTER);'''
+
+NEW_SUBMIT = '''                if (code == KeyEvent.KEYCODE_ENTER) {
+                    sync();
+                    nativeKey(KeyEvent.KEYCODE_ENTER);'''
+
+OLD_ACTION = '''        public boolean performEditorAction(int action) {
+            nativeKey(KeyEvent.KEYCODE_ENTER);'''
+
+NEW_ACTION = '''        public boolean performEditorAction(int action) {
+            sync();
+            nativeKey(KeyEvent.KEYCODE_ENTER);'''
 
 OVERLAY = '''        // MoonMC: любая необработанная ошибка пишется рядом с игрой — иначе краш
         // на старте нечем диагностировать (лог Rust в этот момент ещё пуст).
@@ -304,6 +329,9 @@ def main() -> int:
             (OLD_DISMISS, NEW_DISMISS, "showChoice"),
             (OLD_RESTART, NEW_RESTART, "restart"),
             (OLD_KEYBOARD, NEW_KEYBOARD, "setKeyboard"),
+            (OLD_CONNECTION, NEW_CONNECTION, "onCreateInputConnection"),
+            (OLD_SUBMIT, NEW_SUBMIT, "sendKeyEvent(ENTER)"),
+            (OLD_ACTION, NEW_ACTION, "performEditorAction"),
         ):
             if old not in code:
                 die(f"HorizonActivity.java: не нашёл блок {what}")

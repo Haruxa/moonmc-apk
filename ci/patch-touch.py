@@ -230,6 +230,16 @@ pub extern "system" fn Java_dev_moonmc_game_Native_readyNative(
 ) -> jni::sys::jboolean {
     if crate::moon_input::ready() { 1 } else { 0 }
 }
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
+pub extern "system" fn Java_dev_moonmc_game_Native_enterNative(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+) {
+    crate::moon_input::push(crate::moon_input::Event::Submit);
+}
 """
                 if "Java_dev_moonmc_game_Native_keyDown" not in root:
                     root = root + jni
@@ -354,6 +364,13 @@ pub extern "system" fn Java_dev_moonmc_game_Native_readyNative(
                 Event::Account(name) => {
                     self.options.player_name = name;
                 }
+                // «Ввод» нашего слоя над клавиатурой: в очередь типизированного,
+                // откуда Enter доходит до экрана так же, как от системной клавиатуры.
+                Event::Submit => {
+                    horizon_client::event_loop::push_typed(
+                        horizon_client::event_loop::Typed::Enter,
+                    );
+                }
             }
         }
         crate::moon_input::set_keyboard_up(self.touch.keyboard);
@@ -362,6 +379,31 @@ pub extern "system" fn Java_dev_moonmc_game_Native_readyNative(
             text = text.replace(anchor, body, 1)
             TOUCH.write_text(text)
             print("touch.rs: очередь моста разбирается в кадре")
+
+    # Диагностика ввода с системной клавиатуры: в логе видно, что именно дошло до
+    # движка (Backspace/Enter/текст). Без этого жалобы на набор в чате нечем проверить.
+    soft = CLIENT / "game" / "soft_keyboard.rs"
+    if soft.is_file():
+        body = soft.read_text()
+        anchor = "        for input in typed {"
+        if anchor in body and "MoonMC: клавиатура" not in body:
+            body = body.replace(
+                anchor,
+                anchor
+                + '''
+            match &input {
+                Typed::Backspace => log::info!("MoonMC: клавиатура Backspace"),
+                Typed::Enter => log::info!("MoonMC: клавиатура Enter"),
+                Typed::Text(text) => {
+                    log::info!("MoonMC: клавиатура {} символов", text.chars().count())
+                }
+            }''',
+                1,
+            )
+            soft.write_text(body)
+            print("soft_keyboard.rs: диагностика ввода в лог")
+        elif "MoonMC: клавиатура" in body:
+            print("soft_keyboard.rs: диагностика уже стоит")
 
     gtext = GAME.read_text()
     if "touch: touch::Touch," not in gtext:

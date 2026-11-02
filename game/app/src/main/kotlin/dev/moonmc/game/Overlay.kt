@@ -184,30 +184,21 @@ object Overlay {
     }
 
     /**
-     * Игра просит клавиатуру (чат, поиск): на это время окно слоя убираем совсем —
-     * иначе оно висит над IME и клавиши не нажимаются. Зовёт Java через рефлексию.
+     * Игра просит клавиатуру (чат, поиск). Окно слоя при этом не прячем: закрытие и
+     * открытие диалога сбрасывало ввод (фокус уходил из игры посреди набора). Само окно
+     * глушит applyKeyboard по настоящей видимости IME. Зовёт Java через рефлексию.
      */
     @JvmStatic
     fun gameKeyboard(show: Boolean) {
         if (panelOpenNow) return
-        val d = dialog ?: return
-        try {
-            if (show) {
-                imeShown = true
-                d.hide()
-            } else {
-                imeShown = false
-                if (!d.isShowing) d.show()
-            }
-        } catch (ignored: Throwable) {
-        }
+        imeShown = show
     }
 
-    /** Клавиатура занимает низ экрана: слой на это время не рисуется и не ловит касания,
-     * иначе его кнопки лежат поверх клавиатуры и печатать нельзя. */
+    /** Клавиатура занимает низ экрана: слой на это время не рисуется и не ловит касания
+     * (иначе его кнопки лежат поверх IME). Вместо него — панель ESC/ввод над клавиатурой. */
     private var keyboardHidden = false
 
-    private fun applyKeyboard(up: Boolean) {
+    private fun applyKeyboard(up: Boolean, activity: Activity) {
         if (up == keyboardHidden) return
         keyboardHidden = up
         host?.passthrough = up
@@ -219,6 +210,82 @@ object Overlay {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
             }
         }
+        if (up) showKeys(activity) else hideKeys()
+    }
+
+    /** Клавиатура реально на экране. Флаг движка для этого не годится: IME убирают
+     * своей кнопкой, движок об этом не узнаёт и слой остался бы спрятанным навсегда. */
+    private fun imeVisible(activity: Activity): Boolean = runCatching {
+        val decor = activity.window.decorView
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            decor.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true
+        } else {
+            val frame = android.graphics.Rect()
+            decor.getWindowVisibleDisplayFrame(frame)
+            decor.height - frame.bottom > decor.height / 4
+        }
+    }.getOrDefault(false)
+
+    /** Кнопки над клавиатурой: выйти из чата (ESC) и отправить набранное (ввод).
+     * Отдельное маленькое окно — оно не накрывает клавиши IME, в отличие от слоя. */
+    private var keysDialog: Dialog? = null
+
+    private fun showKeys(activity: Activity) {
+        if (keysDialog != null) return
+        runCatching {
+            val density = activity.resources.displayMetrics.density
+            val width = (56 * density).toInt()
+            val height = (40 * density).toInt()
+            val gap = (10 * density).toInt()
+            fun pill(label: String, tap: () -> Unit) = android.widget.TextView(activity).apply {
+                text = label
+                textSize = 15f
+                gravity = android.view.Gravity.CENTER
+                setTextColor(android.graphics.Color.WHITE)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = height / 2f
+                    setColor(0xE6202C26.toInt())
+                    setStroke((density * 1.5f).toInt().coerceAtLeast(1), 0x66E8F1EC)
+                }
+                setOnClickListener { tap() }
+            }
+            val row = android.widget.LinearLayout(activity).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                addView(
+                    pill("ESC") {
+                        Native.key(256, true)
+                        Native.key(256, false)
+                    },
+                    android.widget.LinearLayout.LayoutParams(width, height)
+                        .apply { rightMargin = gap },
+                )
+                addView(
+                    pill("⏎") { Native.enter() },
+                    android.widget.LinearLayout.LayoutParams(width, height),
+                )
+            }
+            val d = Dialog(activity)
+            d.setContentView(row)
+            d.window?.apply {
+                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+                setLayout(
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                )
+                setGravity(android.view.Gravity.TOP or android.view.Gravity.START)
+                addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+                attributes = attributes.apply { x = gap; y = gap }
+            }
+            d.setCanceledOnTouchOutside(false)
+            d.show()
+            keysDialog = d
+        }
+    }
+
+    private fun hideKeys() {
+        val d = keysDialog ?: return
+        keysDialog = null
+        runCatching { d.dismiss() }
     }
 
     /** Панель открыта: окно получает фокус (иначе поле ника не набрать), закрыта — обратно. */
@@ -390,8 +457,7 @@ object Overlay {
         // Панель открыта — клавиатура нужна для нашего поля, слой не прячем.
         LaunchedEffect(Unit) {
             while (true) {
-                val keyboard = runCatching { Native.keyboardShown() }.getOrDefault(false)
-                applyKeyboard(keyboard && !openedNow)
+                applyKeyboard(imeVisible(activity) && !openedNow, activity)
                 val menu = runCatching { Native.inMenu() }.getOrDefault(false)
                 if (menu != inMenu) inMenu = menu
                 if (!ready) {

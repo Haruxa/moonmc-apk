@@ -25,6 +25,8 @@ pub(super) enum Event {
     Keyboard(bool),
     /// Вошедший аккаунт (или None — вышли): имя игрока для движка.
     Account(Option<String>),
+    /// «Ввод» слоя над клавиатурой: то же, что Enter системной клавиатуры в чате.
+    Submit,
 }
 
 static QUEUE: OnceLock<Mutex<VecDeque<Event>>> = OnceLock::new();
