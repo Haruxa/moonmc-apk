@@ -132,6 +132,15 @@ object Overlay {
         step(activity, "shown")
     }
 
+    /** Клавиатура Android: кнопка IME их раскладки. */
+    private fun toggleIme(activity: Activity) {
+        runCatching {
+            val imm = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                as android.view.inputmethod.InputMethodManager
+            imm.toggleSoftInput(0, 0)
+        }
+    }
+
     /** Шаги запуска слоя: видно, до какого места дошло перед крашем. */
     private fun step(activity: Activity, text: String) {
         report(activity, "moonmc-layer-step.txt", text)
@@ -148,12 +157,15 @@ object Overlay {
      * иначе меню и поворот камеры не работают. Событие идёт нашим JNI-мостом
      * (очередь moon_input) и попадает в ту же обработку касаний, что и настоящие.
      */
-    internal fun forwardToGame(event: android.view.MotionEvent) {
+    internal fun forwardToGame(
+        event: android.view.MotionEvent,
+        action: Int = event.actionMasked,
+    ) {
         val index = event.actionIndex
         Native.touch(
             event.getX(index),
             event.getY(index),
-            event.actionMasked,
+            action,
             event.getPointerId(index),
         )
     }
@@ -193,13 +205,26 @@ object Overlay {
                 // Событие их слоя → GLFW-код → JNI в движок. Флаг: палец попал в кнопку,
                 // такое касание игре не пересылаем.
                 widgetTouched = true
-                val code = runCatching {
-                    com.movtery.inputmap.keycodes.ControlEventKeycode.getKeycodeFromEvent(event.key)
-                }.getOrNull()
-                if (code != null) {
-                    Native.key(code.toInt(), pressed)
-                } else if (pressed && !event.key.isNullOrBlank()) {
-                    android.util.Log.i("MoonOverlay", "неизвестный control: ${event.key}")
+                if (event.type == ClickEvent.Type.LauncherEvent) {
+                    // Мышь и раскладку их слой помечает как launcher_event: код
+                    // из ControlEventKeycode тут — номер кнопки мыши, не клавиша.
+                    when {
+                        event.key.endsWith("BUTTON_LEFT") || event.key.endsWith("BUTTON_1") ->
+                            Native.mouse(0, pressed)
+                        event.key.endsWith("BUTTON_RIGHT") || event.key.endsWith("BUTTON_2") ->
+                            Native.mouse(1, pressed)
+                        event.key.contains("switch_ime") && pressed -> toggleIme(activity)
+                        else -> Unit
+                    }
+                } else {
+                    val code = runCatching {
+                        com.movtery.inputmap.keycodes.ControlEventKeycode.getKeycodeFromEvent(event.key)
+                    }.getOrNull()
+                    if (code != null) {
+                        Native.key(code.toInt(), pressed)
+                    } else if (pressed && !event.key.isNullOrBlank()) {
+                        android.util.Log.i("MoonOverlay", "неизвестный control: ${event.key}")
+                    }
                 }
             }
         }
@@ -208,7 +233,9 @@ object Overlay {
             ControlBoxLayout(
                 observedLayout = layout,
                 eventHandler = handler,
-                isCursorGrabbing = false,
+                // Захват курсора у них = «идёт игра»: от этого зависит видимость
+                // слоёв с visibilityType in_game (джойстик и Ctrl/Alt), а мы всегда в игре.
+                isCursorGrabbing = true,
                 checkOccupiedPointers = { false },
             ) {
                 // мир под контролами: их слой рисует только кнопки и джойстик
@@ -380,6 +407,12 @@ private class OverlayHost(context: android.content.Context) :
         // палец по пустому месту — пересылаем целиком до отпускания.
         if (forwarding == null) {
             forwarding = !Overlay.widgetTouched
+        } else if (forwarding == true && Overlay.widgetTouched) {
+            // Палец лёг на джойстик или кнопку: игре его отдаём как отменённый,
+            // иначе её собственный тач-слой тянет стик вместе с нашим.
+            Overlay.forwardToGame(event, android.view.MotionEvent.ACTION_CANCEL)
+            forwarding = false
+            return true
         }
         if (forwarding == true) {
             Overlay.forwardToGame(event)
