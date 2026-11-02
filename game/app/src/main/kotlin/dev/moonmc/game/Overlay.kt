@@ -139,6 +139,28 @@ object Overlay {
 
     private fun gameDir(name: String) = File("/sdcard/MoonMC/horizon", name)
 
+    /** Палец текущего жеста попал в кнопку/джойстик слоя (такое касание игре не пересылаем). */
+    @JvmStatic
+    internal var widgetTouched = false
+
+    /**
+     * Касание мимо кнопок уходит в игру: окно оверлея перехватывает диспетчер ввода
+     * (у NativeActivity ввод идёт через InputQueue), поэтому без пересылки меню и
+     * поворот камеры перестают работать. Через очередь игры события приходят
+     * обычными касаниями — с настоящим DeviceId и координатами.
+     */
+    internal fun forwardToGame(event: android.view.MotionEvent) {
+        val queue = dev.moonmc.moonmc.HorizonActivity.gameQueue ?: return
+        runCatching {
+            queue.sendInputEvent(
+                android.view.MotionEvent.obtain(event),
+                Any(),
+                false,
+                android.view.InputQueue.FinishedInputEventCallback { _, _ -> },
+            )
+        }
+    }
+
     /** Раскладка: своя из папки игры, иначе встроенная из assets. */
     private fun readLayout(activity: Activity): ObservableControlLayout? {
         val text = runCatching {
@@ -171,7 +193,9 @@ object Overlay {
 
         val handler = remember {
             EventHandler { event: ClickEvent, pressed: Boolean ->
-                // Событие их слоя → GLFW-код → JNI в движок.
+                // Событие их слоя → GLFW-код → JNI в движок. Флаг: палец попал в кнопку,
+                // такое касание игре не пересылаем.
+                widgetTouched = true
                 val code = runCatching {
                     com.movtery.inputmap.keycodes.ControlEventKeycode.getKeycodeFromEvent(event.key)
                 }.getOrNull()
@@ -305,6 +329,9 @@ private class OverlayHost(context: android.content.Context) :
     private val savedStateController = androidx.savedstate.SavedStateRegistryController.create(this)
     override val viewModelStore = androidx.lifecycle.ViewModelStore()
 
+    /** Жест пересылается игре (true) или съеден кнопками слоя (false). */
+    private var forwarding: Boolean? = null
+
     override val lifecycle: androidx.lifecycle.Lifecycle get() = lifecycleRegistry
 
     override val savedStateRegistry: androidx.savedstate.SavedStateRegistry
@@ -320,5 +347,27 @@ private class OverlayHost(context: android.content.Context) :
         savedStateController.performAttach()
         savedStateController.performRestore(null)
         lifecycleRegistry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED
+    }
+
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
+            Overlay.widgetTouched = false
+            forwarding = null
+        }
+        super.dispatchTouchEvent(event)
+        // Судим по жесту целиком: палец, попавший в кнопку, игре не пересылаем,
+        // палец по пустому месту — пересылаем целиком до отпускания.
+        if (forwarding == null) {
+            forwarding = !Overlay.widgetTouched
+        }
+        if (forwarding == true) {
+            Overlay.forwardToGame(event)
+        }
+        if (event.actionMasked == android.view.MotionEvent.ACTION_UP ||
+            event.actionMasked == android.view.MotionEvent.ACTION_CANCEL
+        ) {
+            forwarding = null
+        }
+        return true
     }
 }

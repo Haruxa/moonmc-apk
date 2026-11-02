@@ -266,8 +266,33 @@ def main() -> int:
 """
         if anchor in code:
             code = code.replace(anchor, method + anchor, 1)
-            open(ACTIVITY, "w").write(code)
+            open(ACTIVITY, "w", encoding="utf-8").write(code)
             print("экран: добавлен nativeLibraryDir()")
+
+    if "gameQueue" not in code:
+        anchor = "    /** Called once preparing is done: the app starts again, now with its resources. */"
+        queue_methods = '''    /** MoonMC: очередь ввода игры — сюда оверлей пересылает касания мимо кнопок. */
+    public static volatile android.view.InputQueue gameQueue;
+
+    @Override
+    public void onInputQueueCreated(android.view.InputQueue queue) {
+        super.onInputQueueCreated(queue);
+        gameQueue = queue;
+    }
+
+    @Override
+    public void onInputQueueDestroyed(android.view.InputQueue queue) {
+        super.onInputQueueDestroyed(queue);
+        if (gameQueue == queue) {
+            gameQueue = null;
+        }
+    }
+
+'''
+        if anchor in code:
+            code = code.replace(anchor, queue_methods + anchor, 1)
+            open(ACTIVITY, "w", encoding="utf-8").write(code)
+            print("экран: очередь ввода игры сохранена (gameQueue)")
 
     if "dev.moonmc.game.Overlay" not in code:
         anchor = "        addContentView(input, new ViewGroup.LayoutParams(1, 1));"
