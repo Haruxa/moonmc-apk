@@ -364,12 +364,17 @@ pub extern "system" fn Java_dev_moonmc_game_Native_enterNative(
                 Event::Account(name) => {
                     self.options.player_name = name;
                 }
-                // «Ввод» нашего слоя над клавиатурой: в очередь типизированного,
-                // откуда Enter доходит до экрана так же, как от системной клавиатуры.
+                // «Ввод» нашего слоя над клавиатурой: в чате — напрямую в экран чата,
+                // без очереди клавиатуры (она может остаться без устройства ввода и
+                // тогда всё, что введено, молча выбрасывается).
                 Event::Submit => {
-                    horizon_client::event_loop::push_typed(
-                        horizon_client::event_loop::Typed::Enter,
-                    );
+                    if self.screen == Screen::Chat && self.title.is_none() {
+                        self.chat_key_code(winit::keyboard::KeyCode::Enter, None);
+                    } else {
+                        horizon_client::event_loop::push_typed(
+                            horizon_client::event_loop::Typed::Enter,
+                        );
+                    }
                 }
             }
         }
@@ -380,30 +385,28 @@ pub extern "system" fn Java_dev_moonmc_game_Native_enterNative(
             TOUCH.write_text(text)
             print("touch.rs: очередь моста разбирается в кадре")
 
-    # Диагностика ввода с системной клавиатуры: в логе видно, что именно дошло до
-    # движка (Backspace/Enter/текст). Без этого жалобы на набор в чате нечем проверить.
-    soft = CLIENT / "game" / "soft_keyboard.rs"
-    if soft.is_file():
-        body = soft.read_text()
-        anchor = "        for input in typed {"
-        if anchor in body and "MoonMC: клавиатура" not in body:
+    # Диагностика ввода: в логе видно, что именно дошло от клавиатуры до движка.
+    # Без этого жалобы на набор в чате нечем проверить.
+    events = CLIENT / "event_loop.rs"
+    if events.is_file():
+        body = events.read_text()
+        anchor = "pub fn push_typed(typed: Typed) {"
+        if anchor in body and "MoonMC: ввод" not in body:
             body = body.replace(
                 anchor,
                 anchor
                 + '''
-            match &input {
-                Typed::Backspace => log::info!("MoonMC: клавиатура Backspace"),
-                Typed::Enter => log::info!("MoonMC: клавиатура Enter"),
-                Typed::Text(text) => {
-                    log::info!("MoonMC: клавиатура {} символов", text.chars().count())
-                }
-            }''',
+    match &typed {
+        Typed::Text(text) => log::info!("MoonMC: ввод — {} символов", text.chars().count()),
+        Typed::Backspace => log::info!("MoonMC: ввод — Backspace"),
+        Typed::Enter => log::info!("MoonMC: ввод — Enter"),
+    }''',
                 1,
             )
-            soft.write_text(body)
-            print("soft_keyboard.rs: диагностика ввода в лог")
-        elif "MoonMC: клавиатура" in body:
-            print("soft_keyboard.rs: диагностика уже стоит")
+            events.write_text(body)
+            print("event_loop.rs: диагностика ввода в лог")
+        elif "MoonMC: ввод" in body:
+            print("event_loop.rs: диагностика уже стоит")
 
     gtext = GAME.read_text()
     if "touch: touch::Touch," not in gtext:
