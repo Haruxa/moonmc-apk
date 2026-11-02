@@ -209,6 +209,16 @@ pub extern "system" fn Java_dev_moonmc_game_Native_accountNameNative(
         Err(_) => std::ptr::null_mut(),
     }
 }
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
+pub extern "system" fn Java_dev_moonmc_game_Native_inMenuNative(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+) -> jni::sys::jboolean {
+    if crate::moon_input::in_menu() { 1 } else { 0 }
+}
 """
                 if "Java_dev_moonmc_game_Native_keyDown" not in root:
                     root = root + jni
@@ -336,7 +346,8 @@ pub extern "system" fn Java_dev_moonmc_game_Native_accountNameNative(
             }
         }
         crate::moon_input::set_keyboard_up(self.touch.keyboard);
-        crate::moon_input::set_account(&self.options.player_name());"""
+        crate::moon_input::set_account(&self.options.player_name());
+        crate::moon_input::set_in_menu(self.touch_in_menu());"""
             text = text.replace(anchor, body, 1)
             TOUCH.write_text(text)
             print("touch.rs: очередь моста разбирается в кадре")

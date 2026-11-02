@@ -389,7 +389,7 @@
             "name": "layer2",
             "uuid": "81548d8b5adb",
             "hide": false,
-            "visibilityType": "always",
+            "visibilityType": "in_game",
             "normalButtons": [
                 {
                     "text": {

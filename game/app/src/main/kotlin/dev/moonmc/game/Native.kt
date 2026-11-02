@@ -65,6 +65,12 @@ object Native {
         runCatching { setAccountNative(name) }
     }
 
+    /** Открыт ли экран/меню игры: тогда игровые кнопки слоя скрыты. */
+    fun inMenu(): Boolean {
+        ensure()
+        return runCatching { inMenuNative() }.getOrDefault(false)
+    }
+
     private external fun keyDown(code: Int, pressed: Boolean)
     private external fun mouseDown(button: Int, pressed: Boolean)
     private external fun stickMove(x: Float, y: Float)
@@ -74,4 +80,5 @@ object Native {
     private external fun keyboardIsShown(): Boolean
     private external fun accountNameNative(): String
     private external fun setAccountNative(name: String)
+    private external fun inMenuNative(): Boolean
 }

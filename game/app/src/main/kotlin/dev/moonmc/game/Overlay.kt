@@ -5,16 +5,38 @@ import android.app.Dialog
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.view.WindowManager
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color as C
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.setViewTreeLifecycleOwner
@@ -26,6 +48,7 @@ import com.movtery.layer_controller.event.EventHandler
 import com.movtery.layer_controller.layout.loadLayoutFromString
 import com.movtery.layer_controller.observable.ObservableControlLayout
 import java.io.File
+import kotlin.math.roundToInt
 
 /**
  * Игровой слой MoonMC: контролы из Zalith Launcher 2 (`LayerController`) и панель
@@ -38,6 +61,7 @@ import java.io.File
  */
 object Overlay {
     private const val PERF = "moonmc/perf.txt"
+    private const val GEAR = "moonmc/gear.txt"
     private const val LAYOUT_DIR = "touch/zalith"
     /** Файл-выключатель слоя управления (крайняя мера при крашах). */
     private const val LAYER_OFF = "moonmc-layer-off.txt"
@@ -148,7 +172,11 @@ object Overlay {
 
     /** Клавиатура занимает низ экрана: слой на это время не рисуется и не ловит касания,
      * иначе его кнопки лежат поверх клавиатуры и печатать нельзя. */
+    private var keyboardHidden = false
+
     private fun applyKeyboard(up: Boolean) {
+        if (up == keyboardHidden) return
+        keyboardHidden = up
         host?.passthrough = up
         content?.visibility = if (up) android.view.View.GONE else android.view.View.VISIBLE
         dialog?.window?.let { window ->
@@ -159,6 +187,28 @@ object Overlay {
             }
         }
     }
+
+    /** Панель открыта: окно получает фокус (иначе поле ника не набрать), закрыта — обратно. */
+    private fun panelFocus(open: Boolean) {
+        runCatching {
+            dialog?.window?.let { window ->
+                if (open) {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+                    window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+                } else {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+                    window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+                }
+            }
+        }
+    }
+
+    /** Прямоугольники наших элементов (шестерня, панель) в пикселях экрана. */
+    @Volatile
+    internal var uiRects: List<android.graphics.Rect> = emptyList()
+
+    /** Палец лёг на наш интерфейс, а не на мимо: такое касание съедает Compose. */
+    internal fun hitUi(x: Float, y: Float): Boolean = uiRects.any { it.contains(x.toInt(), y.toInt()) }
 
     /** Шаги запуска слоя: видно, до какого места дошло перед крашем. */
     private fun step(activity: Activity, text: String) {
@@ -217,14 +267,41 @@ object Overlay {
     @Composable
     private fun Layer(activity: Activity) {
         val layout = remember { readLayout(activity) }
+        val density = LocalDensity.current
         var opened by remember { mutableStateOf(false) }
+        var tab by remember { mutableIntStateOf(0) }
+        var inMenu by remember { mutableStateOf(false) }
+        var gear by remember { mutableStateOf(readGear(activity)) }
+        val gearSize = with(density) { 48.dp.toPx() }
+        val panelRect = remember { mutableStateOf<android.graphics.Rect?>(null) }
+        val openedNow by rememberUpdatedState(opened)
 
-        // Клавиатуру может открыть и сам движок (поле ввода в меню): состояние берём у него.
+        // Клавиатуру и меню открывает сам движок: берём состояние у него.
+        // Панель открыта — клавиатура нужна для нашего поля, слой не прячем.
         LaunchedEffect(Unit) {
             while (true) {
-                applyKeyboard(runCatching { Native.keyboardShown() }.getOrDefault(imeShown))
+                val keyboard = runCatching { Native.keyboardShown() }.getOrDefault(false)
+                applyKeyboard(keyboard && !openedNow)
+                val menu = runCatching { Native.inMenu() }.getOrDefault(false)
+                if (menu != inMenu) inMenu = menu
                 kotlinx.coroutines.delay(250)
             }
+        }
+        LaunchedEffect(opened) {
+            panelFocus(opened)
+            if (!opened) panelRect.value = null
+        }
+        SideEffect {
+            val rects = ArrayList<android.graphics.Rect>(2)
+            val r = gearSize / 2f
+            rects.add(
+                android.graphics.Rect(
+                    (gear.x - r).toInt(), (gear.y - r).toInt(),
+                    (gear.x + r).toInt(), (gear.y + r).toInt(),
+                ),
+            )
+            panelRect.value?.let { rects.add(it) }
+            uiRects = rects
         }
 
         val handler = remember {
@@ -256,66 +333,169 @@ object Overlay {
             }
         }
 
-        Box(Modifier.fillMaxSize()) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val screenW = constraints.maxWidth.toFloat()
+            val screenH = constraints.maxHeight.toFloat()
+            LaunchedEffect(screenW, screenH) {
+                if (gear.x < 0f) {
+                    gear = Offset(screenW - gearSize - 24f, screenH * 0.32f)
+                }
+            }
             ControlBoxLayout(
                 observedLayout = layout,
                 eventHandler = handler,
                 // Захват курсора у них = «идёт игра»: от этого зависит видимость
-                // слоёв с visibilityType in_game (джойстик и Ctrl/Alt), а мы всегда в игре.
-                isCursorGrabbing = true,
+                // слоёв с visibilityType in_game. В меню игровые кнопки скрыты.
+                isCursorGrabbing = !inMenu,
                 checkOccupiedPointers = { false },
             ) {
                 // мир под контролами: их слой рисует только кнопки и джойстик
             }
 
-            // капелька с шестерёнкой: маленькая, по центру сверху — как в Zalith
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 8.dp)
-                    .size(36.dp),
-                shape = RoundedCornerShape(
-                    topStartPercent = 50,
-                    topEndPercent = 50,
-                    bottomEndPercent = 50,
-                    bottomStartPercent = 12,
-                ),
-                color = C(0xF014211C),
-                border = androidx.compose.foundation.BorderStroke(1.dp, C(0x339BE8BE)),
-                shadowElevation = 8.dp,
-                onClick = { opened = !opened },
+            // Шестерня: круг, который можно тащить в любое место экрана
+            Box(
+                Modifier
+                    .offset { IntOffset(gear.x.roundToInt(), gear.y.roundToInt()) }
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(C(0xE6151A18))
+                    .border(1.dp, C(0x339BE8BE), CircleShape)
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            var moved = 0f
+                            var last = down.position
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                val delta = change.position - last
+                                last = change.position
+                                moved += delta.getDistance()
+                                if (moved > 8f) {
+                                    change.consume()
+                                    gear = Offset(
+                                        (gear.x + delta.x).coerceIn(0f, (screenW - gearSize).coerceAtLeast(0f)),
+                                        (gear.y + delta.y).coerceIn(0f, (screenH - gearSize).coerceAtLeast(0f)),
+                                    )
+                                }
+                                if (!change.pressed) {
+                                    if (moved <= 8f) opened = !opened
+                                    break
+                                }
+                            }
+                            if (moved > 8f) writeGear(activity, gear)
+                        }
+                    },
+                contentAlignment = Alignment.Center,
             ) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Icon(
-                        Icons.Filled.Settings,
-                        contentDescription = null,
-                        tint = C(0xFF9BE8BE),
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
+                Icon(
+                    Icons.Filled.Settings,
+                    contentDescription = null,
+                    tint = C(0xFF9BE8BE),
+                    modifier = Modifier.size(24.dp),
+                )
             }
 
-            if (opened) {
-                SettingsPanel(
-                    activity,
-                    Modifier.align(Alignment.TopCenter),
-                ) { opened = false }
+            AnimatedVisibility(
+                visible = opened,
+                enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+                exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 8.dp),
+            ) {
+                Panel(
+                    activity = activity,
+                    tab = tab,
+                    onTab = { tab = it },
+                    onClose = { opened = false },
+                    modifier = Modifier.onGloballyPositioned { info ->
+                        val bounds = info.boundsInRoot()
+                        panelRect.value = android.graphics.Rect(
+                            bounds.left.toInt(), bounds.top.toInt(),
+                            bounds.right.toInt(), bounds.bottom.toInt(),
+                        )
+                    },
+                )
+            }
+        }
+    }
+
+    /** Панель справа: вдоль левого края вкладки, справа — содержимое. */
+    @Composable
+    private fun Panel(
+        activity: Activity,
+        tab: Int,
+        onTab: (Int) -> Unit,
+        onClose: () -> Unit,
+        modifier: Modifier = Modifier,
+    ) {
+        Surface(
+            modifier = modifier.width(380.dp).height(440.dp),
+            shape = RoundedCornerShape(
+                topStart = 32.dp,
+                bottomStart = 32.dp,
+                topEnd = 16.dp,
+                bottomEnd = 16.dp,
+            ),
+            color = C(0xF5101513),
+            tonalElevation = 6.dp,
+        ) {
+            Row(Modifier.fillMaxSize()) {
+                Column(
+                    Modifier.fillMaxHeight().width(64.dp).padding(vertical = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    TabIcon(Icons.Filled.Settings, "Графика", tab == 0) { onTab(0) }
+                    TabIcon(Icons.Filled.Person, "Профили", tab == 1) { onTab(1) }
+                }
+                Column(Modifier.weight(1f).fillMaxHeight().padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (tab == 0) "Графика" else "Профили",
+                            color = C(0xFF9BE8BE),
+                            fontSize = 18.sp,
+                        )
+                        Spacer(Modifier.weight(1f))
+                        IconButton(onClick = onClose) {
+                            Icon(Icons.Filled.Close, "Закрыть", tint = C(0xFF8CA0A7))
+                        }
+                    }
+                    if (tab == 0) GraphicsTab(activity) else ProfilesTab()
+                }
             }
         }
     }
 
     @Composable
-    private fun SettingsPanel(
-        activity: Activity,
-        modifier: Modifier = Modifier,
-        onClose: () -> Unit,
+    private fun TabIcon(
+        icon: androidx.compose.ui.graphics.vector.ImageVector,
+        description: String,
+        selected: Boolean,
+        onClick: () -> Unit,
     ) {
+        Surface(
+            onClick = onClick,
+            shape = CircleShape,
+            color = if (selected) C(0xFF9BE8BE) else C(0x00000000),
+            modifier = Modifier.size(44.dp),
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(
+                    icon,
+                    contentDescription = description,
+                    tint = if (selected) C(0xFF11201A) else C(0xFFB9C8CE),
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun GraphicsTab(activity: Activity) {
         val saved = remember { readPerf(activity) }
         var dynamicResolution by remember { mutableStateOf(saved["dynamic_resolution"] ?: "on") }
         var hdr by remember { mutableStateOf(saved["hdr"] ?: "off") }
         var fpsCap by remember { mutableStateOf(saved["fps_cap"] ?: "60") }
-        val accounts = remember { readAccounts() }
-        var current by remember { mutableStateOf(runCatching { Native.accountName() }.getOrDefault("")) }
 
         fun store() = writePerf(
             activity,
@@ -326,59 +506,153 @@ object Overlay {
             ),
         )
 
-        Surface(
-            modifier = modifier
-                .padding(top = 52.dp)
-                .width(320.dp),
-            shape = RoundedCornerShape(24.dp),
-            color = C(0xF0111418),
-            tonalElevation = 6.dp,
-        ) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Настройки", color = C(0xFF9BE8BE), fontSize = 16.sp)
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onClose) { Text("Закрыть", fontSize = 12.sp) }
-                }
-                Text("Производительность", color = C(0xFFB9C8CE), fontSize = 12.sp)
-                Toggle("Динамическое разрешение", dynamicResolution == "on") {
-                    dynamicResolution = if (it) "on" else "off"; store()
-                }
-                Toggle("HDR-вывод", hdr == "on") { hdr = if (it) "on" else "off"; store() }
-                Text("Лимит FPS", color = C(0xFFB9C8CE), fontSize = 12.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("30", "60", "90", "0").forEach { value ->
-                        FilterChip(
-                            selected = fpsCap == value,
-                            onClick = { fpsCap = value; store() },
-                            label = { Text(if (value == "0") "∞" else value, fontSize = 12.sp) },
-                        )
-                    }
-                }
-                Text(
-                    "Управление — из Zalith Launcher 2: раскладка touch/zalith/layout.json",
-                    color = C(0xFF8CA0A7),
-                    fontSize = 11.sp,
-                )
-                Text("Аккаунт", color = C(0xFFB9C8CE), fontSize = 12.sp)
-                Text(
-                    if (current.isBlank()) "не выбран" else current,
-                    color = C(0xFF9BE8BE),
-                    fontSize = 13.sp,
-                )
-                if (accounts.isEmpty()) {
-                    Text(
-                        "Список в /sdcard/MoonMC/accounts.json: [\"ник\", …]",
-                        color = C(0xFF8CA0A7),
-                        fontSize = 11.sp,
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Toggle("Динамическое разрешение", dynamicResolution == "on") {
+                dynamicResolution = if (it) "on" else "off"; store()
+            }
+            Toggle("HDR-вывод", hdr == "on") { hdr = if (it) "on" else "off"; store() }
+            Text("Лимит FPS", color = C(0xFFB9C8CE), fontSize = 12.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("30", "60", "90", "0").forEach { value ->
+                    FilterChip(
+                        selected = fpsCap == value,
+                        onClick = { fpsCap = value; store() },
+                        label = { Text(if (value == "0") "∞" else value, fontSize = 12.sp) },
                     )
-                } else {
-                    accounts.forEach { name ->
-                        TextButton(onClick = {
-                            Native.setAccount(name)
-                            current = name
-                        }) { Text(name, fontSize = 12.sp) }
-                    }
+                }
+            }
+            Text(
+                "Управление — из Zalith Launcher 2: раскладка touch/zalith/layout.json",
+                color = C(0xFF8CA0A7),
+                fontSize = 11.sp,
+            )
+        }
+    }
+
+    @Composable
+    private fun ProfilesTab() {
+        var profiles by remember { mutableStateOf(readProfiles()) }
+        var input by remember { mutableStateOf("") }
+        var current by remember { mutableStateOf(runCatching { Native.accountName() }.getOrDefault("")) }
+        var pendingDelete by remember { mutableStateOf<String?>(null) }
+
+        fun store(next: Profiles) {
+            profiles = next
+            writeProfiles(next)
+        }
+
+        fun add() {
+            val name = input.trim().take(16).trim()
+            if (name.isEmpty() || profiles.list.any { it.name == name }) return
+            store(profiles.copy(list = profiles.list + Profile(name)))
+            input = ""
+        }
+
+        OutlinedTextField(
+            value = input,
+            onValueChange = { input = it.take(16) },
+            singleLine = true,
+            placeholder = { Text("ник", fontSize = 13.sp) },
+            leadingIcon = {
+                IconButton(onClick = { add() }) {
+                    Icon(Icons.Filled.Add, "Добавить", tint = C(0xFF9BE8BE))
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(10.dp))
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(profiles.list.sortedByDescending { if (it.pinned) 1 else 0 }, key = { it.name }) { profile ->
+                AccountRow(
+                    profile = profile,
+                    active = profile.name == profiles.active,
+                    onPick = {
+                        Native.setAccount(profile.name)
+                        current = profile.name
+                        store(profiles.copy(active = profile.name))
+                    },
+                    onPin = {
+                        store(
+                            profiles.copy(
+                                list = profiles.list.map {
+                                    if (it.name == profile.name) it.copy(pinned = !it.pinned) else it
+                                },
+                            ),
+                        )
+                    },
+                    onDelete = { pendingDelete = profile.name },
+                )
+            }
+        }
+        if (profiles.list.isEmpty()) {
+            Text(
+                "Введи ник и нажми + — аккаунт появится здесь",
+                color = C(0xFF8CA0A7),
+                fontSize = 11.sp,
+            )
+        }
+        pendingDelete?.let { name ->
+            AlertDialog(
+                onDismissRequest = { pendingDelete = null },
+                title = { Text("Удалить аккаунт?") },
+                text = { Text("«$name» будет удалён из списка" + if (name == current) ", игрок останется текущим до следующего выбора." else ".") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        store(
+                            profiles.copy(
+                                active = if (profiles.active == name) "" else profiles.active,
+                                list = profiles.list.filterNot { it.name == name },
+                            ),
+                        )
+                        pendingDelete = null
+                    }) { Text("Удалить") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDelete = null }) { Text("Отмена") }
+                },
+            )
+        }
+    }
+
+    @Composable
+    private fun AccountRow(
+        profile: Profile,
+        active: Boolean,
+        onPick: () -> Unit,
+        onPin: () -> Unit,
+        onDelete: () -> Unit,
+    ) {
+        Surface(
+            onClick = onPick,
+            shape = RoundedCornerShape(18.dp),
+            color = if (active) C(0xFF1E3A2E) else C(0xFF1A201D),
+            tonalElevation = 1.dp,
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 14.dp, end = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    profile.name,
+                    color = if (active) C(0xFF9BE8BE) else C(0xFFE8F1EC),
+                    fontSize = 14.sp,
+                )
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onPin) {
+                    Icon(
+                        Icons.Filled.Star,
+                        "Закрепить",
+                        tint = if (profile.pinned) C(0xFF9BE8BE) else C(0x55E8F1EC),
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        Icons.Filled.Close,
+                        "Удалить",
+                        tint = C(0xFF8CA0A7),
+                        modifier = Modifier.size(20.dp),
+                    )
                 }
             }
         }
@@ -396,19 +670,65 @@ object Overlay {
         }
     }
 
-    /** Аккаунты из общего списка: строки или объекты с "name". */
-    private fun readAccounts(): List<String> = runCatching {
-        val file = File("/sdcard/MoonMC/accounts.json")
-        if (!file.isFile) return@runCatching emptyList()
-        val array = org.json.JSONArray(file.readText())
-        (0 until array.length()).mapNotNull { i ->
-            when (val item = array.opt(i)) {
-                is String -> item.ifBlank { null }
-                is org.json.JSONObject -> item.optString("name").ifBlank { null }
-                else -> null
-            }
+    /** Аккаунт из списка: ник и закреплён ли он. */
+    internal data class Profile(val name: String, val pinned: Boolean = false)
+
+    /** Список профилей и выбранный. */
+    internal data class Profiles(val active: String = "", val list: List<Profile> = emptyList())
+
+    private fun profilesFile() = File("/sdcard/MoonMC/accounts.json")
+
+    private fun profileOf(item: Any?): Profile? = when (item) {
+        is String -> item.ifBlank { null }?.let { Profile(it) }
+        is org.json.JSONObject -> item.optString("name").ifBlank { null }
+            ?.let { Profile(it, item.optBoolean("pinned")) }
+        else -> null
+    }
+
+    /** Старый формат `["ник", …]` и новый `{"active", "accounts":[…])}` читаются оба. */
+    private fun readProfiles(): Profiles = runCatching {
+        val file = profilesFile()
+        if (!file.isFile) return@runCatching Profiles()
+        val text = file.readText().trim()
+        if (text.startsWith("[")) {
+            val array = org.json.JSONArray(text)
+            Profiles(list = (0 until array.length()).mapNotNull { profileOf(array.opt(it)) })
+        } else {
+            val obj = org.json.JSONObject(text)
+            val array = obj.optJSONArray("accounts") ?: org.json.JSONArray()
+            Profiles(
+                active = obj.optString("active"),
+                list = (0 until array.length()).mapNotNull { profileOf(array.opt(it)) },
+            )
         }
-    }.getOrDefault(emptyList())
+    }.getOrDefault(Profiles())
+
+    private fun writeProfiles(profiles: Profiles) {
+        runCatching {
+            val array = org.json.JSONArray()
+            profiles.list.forEach { p ->
+                array.put(org.json.JSONObject().put("name", p.name).put("pinned", p.pinned))
+            }
+            val obj = org.json.JSONObject().put("active", profiles.active).put("accounts", array)
+            val file = profilesFile()
+            file.parentFile?.mkdirs()
+            file.writeText(obj.toString())
+        }
+    }
+
+    /** Позиция шестерни; (−1, −1) — ещё не ставили (уйдёт в правый край). */
+    private fun readGear(activity: Activity): Offset = runCatching {
+        val parts = gameDir(GEAR).readText().trim().split(' ')
+        Offset(parts[0].toFloat(), parts[1].toFloat())
+    }.getOrDefault(Offset(-1f, -1f))
+
+    private fun writeGear(activity: Activity, at: Offset) {
+        runCatching {
+            val file = gameDir(GEAR)
+            file.parentFile?.mkdirs()
+            file.writeText("${at.x.roundToInt()} ${at.y.roundToInt()}")
+        }
+    }
 
     private fun readPerf(activity: Activity): Map<String, String> = runCatching {
         gameDir(PERF).readLines().mapNotNull { line ->
@@ -468,13 +788,15 @@ private class OverlayHost(context: android.content.Context) :
         when (event.actionMasked) {
             android.view.MotionEvent.ACTION_DOWN,
             android.view.MotionEvent.ACTION_POINTER_DOWN -> {
-                // Судьба пальца решается один раз, на его нажатии: кнопка под пальцем
-                // успевает зарегистрироваться в Compose, остальное уходит игре.
+                // Судьба пальца решается один раз, на его нажатии: кнопка/наша панель
+                // под пальцем — это UI, остальное уходит игре.
                 Overlay.widgetTouched = false
                 super.dispatchTouchEvent(event)
-                val id = event.getPointerId(event.actionIndex)
-                if (Overlay.widgetTouched) gamePointers.remove(id) else gamePointers.add(id)
-                if (id in gamePointers) Overlay.forwardToGame(event, index = event.actionIndex)
+                val index = event.actionIndex
+                val id = event.getPointerId(index)
+                val ui = Overlay.widgetTouched || Overlay.hitUi(event.getX(index), event.getY(index))
+                if (ui) gamePointers.remove(id) else gamePointers.add(id)
+                if (!ui) Overlay.forwardToGame(event, index = index)
                 return true
             }
             android.view.MotionEvent.ACTION_CANCEL -> {
@@ -491,8 +813,14 @@ private class OverlayHost(context: android.content.Context) :
                 val game = ids.filter { it in gamePointers }
                 // Кнопки видят только свои пальцы: жест, ушедший камере,
                 // их не нажимает и не обрывает поворот.
-                if (ui.isNotEmpty()) super.dispatchTouchEvent(subset(event, ui))
-                for (id in game) forwardGamePointer(event, id)
+                when {
+                    game.isEmpty() -> super.dispatchTouchEvent(event)
+                    ui.isEmpty() -> for (id in game) forwardGamePointer(event, id)
+                    else -> {
+                        super.dispatchTouchEvent(subset(event, ui))
+                        for (id in game) forwardGamePointer(event, id)
+                    }
+                }
                 if (event.actionMasked != android.view.MotionEvent.ACTION_MOVE) {
                     gamePointers.remove(event.getPointerId(event.actionIndex))
                 }

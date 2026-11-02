@@ -74,6 +74,17 @@ pub(super) fn account() -> String {
         .unwrap_or_default()
 }
 
+/// Открыт ли экран/меню игры: тогда игровые кнопки слоя скрыты.
+static IN_MENU: OnceLock<AtomicBool> = OnceLock::new();
+
+pub(super) fn set_in_menu(on: bool) {
+    IN_MENU.get_or_init(|| AtomicBool::new(false)).store(on, Ordering::Relaxed);
+}
+
+pub(super) fn in_menu() -> bool {
+    IN_MENU.get_or_init(|| AtomicBool::new(false)).load(Ordering::Relaxed)
+}
+
 /// Жест пальца в мире: камера и тап, без старого тач-слоя порта.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Step {
