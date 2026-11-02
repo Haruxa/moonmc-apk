@@ -5,6 +5,7 @@
 //! и применяет как клавиши/кнопки/оси — так же, как это делает тач-слой порта.
 use std::collections::VecDeque;
 use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant};
 
 use winit::keyboard::KeyCode;
 
@@ -19,6 +20,8 @@ pub(super) enum Event {
     /// Касание мимо кнопок слоя (клик меню, поворот камеры):
     /// физические пиксели x, y; action = MotionEvent.actionMasked; id = палец.
     Touch(f32, f32, i32, i32),
+    /// Системная клавиатура Android: показать/скрыть (кнопка IME слоя).
+    Keyboard(bool),
 }
 
 static QUEUE: OnceLock<Mutex<VecDeque<Event>>> = OnceLock::new();
@@ -39,6 +42,99 @@ pub(super) fn push(event: Event) {
 
 pub(super) fn drain() -> Vec<Event> {
     std::mem::take(&mut *queue()).into()
+}
+
+/// Жест пальца в мире: камера и тап, без старого тач-слоя порта.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Step {
+    /// Поворот камеры на смещение пальца (физические пиксели).
+    Look(f32, f32),
+    /// Короткий тап: удар/использовать.
+    Tap,
+    /// Ничего делать не нужно.
+    None,
+}
+
+/// Те же пороги, что у тач-слоя порта (`TAP`/`STILL` в game/touch.rs).
+const TAP: Duration = Duration::from_millis(250);
+const STILL: f32 = 6.0;
+
+struct Finger {
+    id: i32,
+    start: (f32, f32),
+    last: (f32, f32),
+    down_at: Instant,
+    moved: f32,
+}
+
+static FINGER: OnceLock<Mutex<Option<Finger>>> = OnceLock::new();
+
+fn finger() -> MutexGuard<'static, Option<Finger>> {
+    FINGER
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
+fn distance(a: (f32, f32), b: (f32, f32)) -> f32 {
+    ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt()
+}
+
+/// Разбор касания для мира: первый палец крутит камеру, его короткий тап — удар.
+/// Остальные пальцы игнорируются, чтобы камера не дёргалась.
+pub(super) fn finger_step(x: f32, y: f32, action: i32, id: i32) -> Step {
+    let mut slot = finger();
+    match action {
+        // ACTION_DOWN
+        0 => {
+            if slot.is_some() {
+                return Step::None;
+            }
+            *slot = Some(Finger {
+                id,
+                start: (x, y),
+                last: (x, y),
+                down_at: Instant::now(),
+                moved: 0.0,
+            });
+            Step::None
+        }
+        // ACTION_MOVE
+        1 => {
+            let Some(f) = slot.as_mut() else {
+                return Step::None;
+            };
+            if f.id != id {
+                return Step::None;
+            }
+            let (dx, dy) = (x - f.last.0, y - f.last.1);
+            f.last = (x, y);
+            f.moved = f.moved.max(distance(f.start, (x, y)));
+            if dx == 0.0 && dy == 0.0 {
+                Step::None
+            } else {
+                Step::Look(dx, dy)
+            }
+        }
+        // ACTION_UP
+        2 => {
+            let Some(f) = slot.take() else {
+                return Step::None;
+            };
+            if f.id == id && f.down_at.elapsed() <= TAP && f.moved < STILL {
+                Step::Tap
+            } else {
+                Step::None
+            }
+        }
+        // ACTION_CANCEL и указатель/прочее: палец забываем.
+        _ => {
+            if slot.as_ref().is_some_and(|f| f.id == id) {
+                *slot = None;
+            }
+            Step::None
+        }
+    }
 }
 
 /// GLFW-код (Zalith/InputMap) → клавиша winit.
@@ -117,4 +213,39 @@ pub(super) fn key_of(glfw: i32) -> Option<KeyCode> {
         345 => KeyCode::ControlRight,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+// shortcut: модуль android-only (mod android::moon_input), поэтому `cargo test` эти
+// тесты не гоняет — жест проверяется на устройстве; тесты для будущего хоста.
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_tap_is_attack() {
+        assert_eq!(finger_step(10.0, 10.0, 0, 0), Step::None);
+        assert_eq!(finger_step(10.0, 10.0, 2, 0), Step::Tap);
+    }
+
+    #[test]
+    fn swipe_looks_and_is_not_a_tap() {
+        assert_eq!(finger_step(10.0, 10.0, 0, 0), Step::None);
+        assert_eq!(finger_step(60.0, 10.0, 1, 0), Step::Look(50.0, 0.0));
+        assert_eq!(finger_step(60.0, 10.0, 2, 0), Step::None);
+    }
+
+    #[test]
+    fn cancel_forgets_the_finger() {
+        assert_eq!(finger_step(10.0, 10.0, 0, 0), Step::None);
+        assert_eq!(finger_step(10.0, 10.0, 3, 0), Step::None);
+        assert_eq!(finger_step(10.0, 10.0, 2, 0), Step::None);
+    }
+
+    #[test]
+    fn second_finger_is_ignored() {
+        assert_eq!(finger_step(10.0, 10.0, 0, 0), Step::None);
+        assert_eq!(finger_step(80.0, 80.0, 0, 1), Step::None);
+        assert_eq!(finger_step(60.0, 10.0, 1, 0), Step::Look(50.0, 0.0));
+        assert_eq!(finger_step(80.0, 80.0, 2, 1), Step::None);
+    }
 }

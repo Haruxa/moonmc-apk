@@ -93,7 +93,7 @@ def main() -> None:
     if ROOT.is_file():
         root = ROOT.read_text()
         if "mod moon_input;" not in root:
-            anchor = next((l for l in root.splitlines() if l.strip().startswith("mod ")), None)
+            anchor = next((line for line in root.splitlines() if line.strip().startswith("mod ")), None)
             if anchor:
                 root = root.replace(anchor, anchor + "\nmod moon_input;", 1)
                 ROOT.write_text(root)
@@ -160,6 +160,17 @@ pub extern "system" fn Java_dev_moonmc_game_Native_touchEvent(
 ) {
     crate::moon_input::push(crate::moon_input::Event::Touch(x, y, action, id));
 }
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
+pub extern "system" fn Java_dev_moonmc_game_Native_keyboardDown(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    on: jni::sys::jboolean,
+) {
+    crate::moon_input::push(crate::moon_input::Event::Keyboard(on != 0));
+}
 """
                 if "Java_dev_moonmc_game_Native_keyDown" not in root:
                     root = root + jni
@@ -176,23 +187,37 @@ pub extern "system" fn Java_dev_moonmc_game_Native_touchEvent(
         for event in crate::moon_input::drain() {
             use crate::moon_input::Event;
             match event {
+                // Клавиша идёт тем же путём, что и настоящая: mapped_key отдаёт
+                // её игре (self.keys — только состояние тач-слоя).
                 Event::Key(code, pressed) => {
                     if let Some(key) = crate::moon_input::key_of(code) {
-                        if pressed {
-                            self.keys.insert(key);
-                        } else {
-                            self.keys.remove(&key);
+                        if let Err(e) = self.mapped_key(key, pressed, false) {
+                            log::warn!("MoonMC: {key:?}: {e}");
                         }
                     }
                 }
                 Event::Mouse(button, pressed) => {
                     if button < 0 {
                         self.selected = (-button - 100).clamp(0, 8) as usize;
-                    } else if pressed {
-                        if button == 0 {
-                            self.touch.attack_pulse = true;
+                    } else {
+                        let mouse = if button == 0 {
+                            winit::event::MouseButton::Left
                         } else {
-                            self.touch.use_pulse = true;
+                            winit::event::MouseButton::Right
+                        };
+                        if self.captured {
+                            if let Err(e) = self.play_mouse(mouse, pressed) {
+                                log::warn!("MoonMC: {mouse:?}: {e}");
+                            }
+                        } else if let Some(id) = self.window.as_ref().map(|w| w.id()) {
+                            // Меню: кнопка слоя жмёт мышь там, где стоит курсор.
+                            self.pointer_button(
+                                event_loop,
+                                id,
+                                winit::event::DeviceId::dummy(),
+                                mouse,
+                                pressed,
+                            );
                         }
                     }
                 }
@@ -210,10 +235,27 @@ pub extern "system" fn Java_dev_moonmc_game_Native_touchEvent(
                         }
                     }
                 }
-                // Касание мимо кнопок слоя уходит в ту же обработку, что и
-                // настоящие касания: клик меню, поворот камеры, использование.
+                // Мир: палец крутит камеру, его короткий тап — удар/использовать.
+                // Меню: прежний путь — курсор, клик, колесо (листание списков).
                 Event::Touch(x, y, action, id) => {
-                    if let Some(window) = self.window.as_ref().map(|w| w.id()) {
+                    if self.captured {
+                        let scale = self.gui_scale().map_or(1.0, |batch| batch.scale);
+                        match crate::moon_input::finger_step(x, y, action, id) {
+                            crate::moon_input::Step::Look(dx, dy) => {
+                                self.touch_turn(dx / scale, dy / scale, LOOK);
+                            }
+                            // Тап — удар: как левая кнопка мыши, нажали и отпустили.
+                            crate::moon_input::Step::Tap => {
+                                let mouse = winit::event::MouseButton::Left;
+                                for pressed in [true, false] {
+                                    if let Err(e) = self.play_mouse(mouse, pressed) {
+                                        log::warn!("MoonMC: {mouse:?}: {e}");
+                                    }
+                                }
+                            }
+                            crate::moon_input::Step::None => {}
+                        }
+                    } else if let Some(window) = self.window.as_ref().map(|w| w.id()) {
                         let phase = match action {
                             0 => winit::event::TouchPhase::Started,
                             1 => winit::event::TouchPhase::Moved,
@@ -229,6 +271,11 @@ pub extern "system" fn Java_dev_moonmc_game_Native_touchEvent(
                         };
                         self.touch_event(event_loop, window, touch);
                     }
+                }
+                // Кнопка IME слоя: системная клавиатура Android (ввод в чат).
+                Event::Keyboard(on) => {
+                    self.touch.keyboard = on;
+                    horizon_client::event_loop::set_keyboard(on);
                 }
             }
         }"""
@@ -264,15 +311,30 @@ pub extern "system" fn Java_dev_moonmc_game_Native_touchEvent(
             print("game.rs: инициализация touch")
         else:
             ERRORS.append("game.rs: нет инициализации mods")
+    # старый HUD тач-слоя порта больше не рисуется: на экране только слой Zalith
     gtext = GAME.read_text()
-    if "self.draw_touch(" not in gtext:
-        anchor = "            self.draw_extras(&mut batch);"
-        if anchor in gtext:
-            gtext = gtext.replace(anchor, anchor + "\n            self.draw_touch(&mut batch);", 1)
-            GAME.write_text(gtext)
-            print("game.rs: рисуем тач-слой")
+    if "self.draw_touch(&mut batch);" in gtext:
+        gtext = gtext.replace("\n            self.draw_touch(&mut batch);", "", 1)
+        GAME.write_text(gtext)
+        print("game.rs: старый HUD тач-слоя убран")
+
+    # в игре меню рисует Java, screen остаётся Playing: меню узнаём по отпущенному курсору
+    text = TOUCH.read_text()
+    if "!self.captured" not in text:
+        anchor = "    fn touch_in_menu(&self) -> bool {\n        self.pad_in_menu()"
+        if anchor in text:
+            text = text.replace(
+                anchor,
+                "    fn touch_in_menu(&self) -> bool {\n"
+                + "        // Меню в игре рисует Java, screen остаётся Playing; курсор при меню отпущен.\n"
+                + "        !self.captured\n"
+                + "            || self.pad_in_menu()",
+                1,
+            )
+            TOUCH.write_text(text)
+            print("touch.rs: меню узнаётся по отпущенному курсору")
         else:
-            ERRORS.append("game.rs: нет вызова draw_extras")
+            ERRORS.append("touch.rs: нет touch_in_menu")
     gtext = GAME.read_text()
     if "self.touch_frame(event_loop);" not in gtext:
         anchor = "    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {"
@@ -466,8 +528,8 @@ pub extern "system" fn Java_dev_moonmc_game_Native_touchEvent(
     )
 
     # 9. Отрисовка дополнительных контролов.
-    
-    
+
+
     text = replace(
         text,
         "        // Shift lock's aim: a ring at the centre.",
@@ -538,8 +600,6 @@ pub extern "system" fn Java_dev_moonmc_game_Native_touchEvent(
     fn touch_in_menu(&self) -> bool {""",
         "touch_extra",
     )
-
-    
 
     # 11d. EventLoop: конструктор EventLoop::new() на Android паникует
     # ("An AndroidApp as passed to android_main() is required"). Движок в том же файле

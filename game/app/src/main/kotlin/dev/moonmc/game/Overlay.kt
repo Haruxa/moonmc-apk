@@ -42,6 +42,8 @@ object Overlay {
     /** Файл-выключатель слоя управления (крайняя мера при крашах). */
     private const val LAYER_OFF = "moonmc-layer-off.txt"
     private var dialog: Dialog? = null
+    /** Открыта ли сейчас системная клавиатура (кнопка IME переключает). */
+    private var imeShown = false
 
     @JvmStatic
     fun attach(activity: Activity) {
@@ -95,6 +97,7 @@ object Overlay {
             return
         }
         step(activity, "start")
+        imeShown = false
         val host = OverlayHost(activity)
         step(activity, "host ok")
         // Пишем софтверный слой: над Vulkan-поверхностью игры аппаратный рендер Compose
@@ -132,13 +135,11 @@ object Overlay {
         step(activity, "shown")
     }
 
-    /** Клавиатура Android: кнопка IME их раскладки. */
-    private fun toggleIme(activity: Activity) {
-        runCatching {
-            val imm = activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
-                as android.view.inputmethod.InputMethodManager
-            imm.toggleSoftInput(0, 0)
-        }
+    /** Клавиатура Android: кнопка IME их раскладки. Открывает её сам движок
+     * (event_loop::set_keyboard), иначе ввод в чат не доходит. */
+    private fun toggleIme() {
+        imeShown = !imeShown
+        Native.keyboard(imeShown)
     }
 
     /** Шаги запуска слоя: видно, до какого места дошло перед крашем. */
@@ -213,7 +214,7 @@ object Overlay {
                             Native.mouse(0, pressed)
                         event.key.endsWith("BUTTON_RIGHT") || event.key.endsWith("BUTTON_2") ->
                             Native.mouse(1, pressed)
-                        event.key.contains("switch_ime") && pressed -> toggleIme(activity)
+                        event.key.contains("switch_ime") && pressed -> toggleIme()
                         else -> Unit
                     }
                 } else {

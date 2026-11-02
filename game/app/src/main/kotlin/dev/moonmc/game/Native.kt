@@ -41,9 +41,16 @@ object Native {
         runCatching { touchEvent(x, y, action, id) }
     }
 
+    /** Системная клавиатура Android: кнопка IME слоя. */
+    fun keyboard(on: Boolean) {
+        ensure()
+        runCatching { keyboardDown(on) }
+    }
+
     private external fun keyDown(code: Int, pressed: Boolean)
     private external fun mouseDown(button: Int, pressed: Boolean)
     private external fun stickMove(x: Float, y: Float)
     private external fun hotbarSlot(slot: Int)
     private external fun touchEvent(x: Float, y: Float, action: Int, id: Int)
+    private external fun keyboardDown(on: Boolean)
 }
