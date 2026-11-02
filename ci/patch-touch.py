@@ -142,6 +142,19 @@ pub extern "system" fn Java_dev_moonmc_game_Native_hotbar(
 ) {
     crate::moon_input::push(crate::moon_input::Event::Mouse(-100 - slot, true));
 }
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_moonmc_game_Native_touch(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    x: jni::sys::jfloat,
+    y: jni::sys::jfloat,
+    action: jni::sys::jint,
+    id: jni::sys::jint,
+) {
+    crate::moon_input::push(crate::moon_input::Event::Touch(x, y, action, id));
+}
 """
                 if "Java_dev_moonmc_game_Native_key" not in root:
                     root = root + jni
@@ -190,6 +203,26 @@ pub extern "system" fn Java_dev_moonmc_game_Native_hotbar(
                         } else {
                             self.keys.remove(&key);
                         }
+                    }
+                }
+                // Касание мимо кнопок слоя уходит в ту же обработку, что и
+                // настоящие касания: клик меню, поворот камеры, использование.
+                Event::Touch(x, y, action, id) => {
+                    if let Some(window) = self.window.as_ref().map(|w| w.id()) {
+                        let phase = match action {
+                            0 => winit::event::TouchPhase::Started,
+                            1 => winit::event::TouchPhase::Moved,
+                            2 => winit::event::TouchPhase::Ended,
+                            _ => winit::event::TouchPhase::Cancelled,
+                        };
+                        let touch = winit::event::Touch {
+                            device_id: winit::event::DeviceId::dummy(),
+                            phase,
+                            location: winit::dpi::PhysicalPosition::new(x as f64, y as f64),
+                            force: None,
+                            id: id as u64,
+                        };
+                        self.touch_event(event_loop, window, touch);
                     }
                 }
             }

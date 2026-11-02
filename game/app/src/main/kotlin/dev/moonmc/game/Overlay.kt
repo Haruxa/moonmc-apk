@@ -144,38 +144,18 @@ object Overlay {
     internal var widgetTouched = false
 
     /**
-     * Касание мимо кнопок уходит в игру: окно оверлея перехватывает диспетчер ввода
-     * (у NativeActivity ввод идёт через InputQueue), поэтому без пересылки меню и
-     * поворот камеры перестают работать. Через очередь игры события приходят
-     * обычными касаниями — с настоящим DeviceId и координатами.
-     *
-     * `InputQueue.sendInputEvent` — скрытый API (в android.jar его нет), поэтому идём
-     * через рефлексию: с targetSdk 28 такие методы доступны.
+     * Касание мимо кнопок уходит в игру: окно оверлея перехватывает диспетчер ввода,
+     * иначе меню и поворот камеры не работают. Событие идёт нашим JNI-мостом
+     * (очередь moon_input) и попадает в ту же обработку касаний, что и настоящие.
      */
     internal fun forwardToGame(event: android.view.MotionEvent) {
-        val queue = dev.moonmc.moonmc.HorizonActivity.gameQueue ?: return
-        runCatching {
-            val callbackClass = Class.forName("android.view.InputQueue\$FinishedInputEventCallback")
-            val callback = java.lang.reflect.Proxy.newProxyInstance(
-                callbackClass.classLoader,
-                arrayOf(callbackClass),
-            ) { _, method, _ ->
-                when (method.name) {
-                    "hashCode" -> 0
-                    "equals" -> false
-                    "toString" -> "MoonInputCallback"
-                    else -> null
-                }
-            }
-            val send = queue.javaClass.getMethod(
-                "sendInputEvent",
-                android.view.InputEvent::class.java,
-                Any::class.java,
-                java.lang.Boolean.TYPE,
-                callbackClass,
-            )
-            send.invoke(queue, android.view.MotionEvent.obtain(event), Any(), false, callback)
-        }
+        val index = event.actionIndex
+        Native.touch(
+            event.getX(index),
+            event.getY(index),
+            event.actionMasked,
+            event.getPointerId(index),
+        )
     }
 
     /** Раскладка: своя из папки игры, иначе встроенная из assets. */
@@ -234,9 +214,12 @@ object Overlay {
                 // мир под контролами: их слой рисует только кнопки и джойстик
             }
 
-            // капелька с шестерёнкой: маленькая, сверху, с тенью — как в Zalith
+            // капелька с шестерёнкой: маленькая, по центру сверху — как в Zalith
             Surface(
-                modifier = Modifier.padding(top = 10.dp, start = 10.dp).size(40.dp),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 8.dp)
+                    .size(36.dp),
                 shape = RoundedCornerShape(
                     topStartPercent = 50,
                     topEndPercent = 50,
@@ -253,7 +236,7 @@ object Overlay {
                         Icons.Filled.Settings,
                         contentDescription = null,
                         tint = C(0xFF9BE8BE),
-                        modifier = Modifier.size(22.dp),
+                        modifier = Modifier.size(20.dp),
                     )
                 }
             }
@@ -281,7 +264,10 @@ object Overlay {
         )
 
         Surface(
-            modifier = Modifier.padding(top = 64.dp, start = 12.dp).width(320.dp),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 52.dp)
+                .width(320.dp),
             shape = RoundedCornerShape(24.dp),
             color = C(0xF0111418),
             tonalElevation = 6.dp,

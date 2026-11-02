@@ -10,6 +10,7 @@ adaptive-иконки. package (cat.narezany.horizon) и lib_name не трог�
 --layout flat). Экран первой загрузки — ci/splash/MoonSplash.java (рисуется кодом).
 """
 import os
+import pathlib
 import re
 import shutil
 import sys
@@ -223,8 +224,11 @@ def main() -> int:
 
     # 2. Фон adaptive-иконки (белый, как в исходнике) и подпись
     colors = os.path.join(ANDROID, "res", "values", "colors.xml")
-    os.makedirs(os.path.dirname(colors), exist_ok=True)
-    open(colors, "w").write(
+    try:
+        os.makedirs(os.path.dirname(colors), exist_ok=True)
+    except OSError as error:
+        die(f"не могу создать каталог ресурсов: {error}")
+    pathlib.Path(colors).write_text(
         '<?xml version="1.0" encoding="utf-8"?>\n'
         "<resources>\n"
         '    <color name="ic_launcher_background">#FFFFFF</color>\n'
@@ -232,7 +236,7 @@ def main() -> int:
     )
 
     # 3. Манифест: label и иконки
-    xml = open(MANIFEST).read()
+    xml = pathlib.Path(MANIFEST).read_text()
     xml = re.sub(r'android:label="[^"]*"', f'android:label="{LABEL}"', xml, count=1)
     if 'android:roundIcon' not in xml:
         xml = xml.replace(
@@ -240,7 +244,7 @@ def main() -> int:
             'android:icon="@mipmap/ic_launcher"\n        android:roundIcon="@mipmap/ic_launcher"',
             1,
         )
-    open(MANIFEST, "w").write(xml)
+    pathlib.Path(MANIFEST).write_text(xml)
 
     label = re.search(r'android:label="([^"]*)"', xml)
     print(f"манифест: label={label.group(1) if label else '???'}, иконка @mipmap/ic_launcher")
@@ -254,7 +258,7 @@ def main() -> int:
                 shutil.copyfile(os.path.join(SPLASH, name), os.path.join(java_dir, name))
                 print(f"экран загрузки: {name} -> android/java")
 
-    code = open(ACTIVITY).read()
+    code = pathlib.Path(ACTIVITY).read_text()
     if "nativeLibraryDir" not in code:
         anchor = "    /** Called once preparing is done: the app starts again, now with its resources. */"
         method = """    /** MoonMC: папка нативных библиотек (в Gradle-сборке libs лежат внутри APK). */
@@ -266,40 +270,15 @@ def main() -> int:
 """
         if anchor in code:
             code = code.replace(anchor, method + anchor, 1)
-            open(ACTIVITY, "w", encoding="utf-8").write(code)
+            pathlib.Path(ACTIVITY).write_text(code, encoding="utf-8")
             print("экран: добавлен nativeLibraryDir()")
-
-    if "gameQueue" not in code:
-        anchor = "    /** Called once preparing is done: the app starts again, now with its resources. */"
-        queue_methods = '''    /** MoonMC: очередь ввода игры — сюда оверлей пересылает касания мимо кнопок. */
-    public static volatile android.view.InputQueue gameQueue;
-
-    @Override
-    public void onInputQueueCreated(android.view.InputQueue queue) {
-        super.onInputQueueCreated(queue);
-        gameQueue = queue;
-    }
-
-    @Override
-    public void onInputQueueDestroyed(android.view.InputQueue queue) {
-        super.onInputQueueDestroyed(queue);
-        if (gameQueue == queue) {
-            gameQueue = null;
-        }
-    }
-
-'''
-        if anchor in code:
-            code = code.replace(anchor, queue_methods + anchor, 1)
-            open(ACTIVITY, "w", encoding="utf-8").write(code)
-            print("экран: очередь ввода игры сохранена (gameQueue)")
 
     if "dev.moonmc.game.Overlay" not in code:
         anchor = "        addContentView(input, new ViewGroup.LayoutParams(1, 1));"
         if anchor not in code:
             die("HorizonActivity.java: не нашёл onCreate для слоя управления")
         code = code.replace(anchor, anchor + "\n" + OVERLAY, 1)
-        open(ACTIVITY, "w").write(code)
+        pathlib.Path(ACTIVITY).write_text(code)
         print("экран: игровой слой подключён")
     if "MoonSplash" in code:
         print("экран загрузки: уже пропатчен")
@@ -318,7 +297,7 @@ def main() -> int:
         code = code.replace("MargyMC", "MoonMC")
         if "MargyMC" in code:
             die("HorizonActivity.java: остались упоминания MargyMC")
-        open(ACTIVITY, "w").write(code)
+        pathlib.Path(ACTIVITY).write_text(code)
         print("экран загрузки: AlertDialog MargyMC -> MoonSplash MoonMC")
     if not label or label.group(1) != LABEL:
         die("не удалось выставить android:label")

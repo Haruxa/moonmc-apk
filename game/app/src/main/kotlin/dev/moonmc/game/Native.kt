@@ -35,8 +35,15 @@ object Native {
         runCatching { hotbarSlot(slot) }
     }
 
+    /** Касание экрана: action — MotionEvent.actionMasked, id — номер пальца. */
+    fun touch(x: Float, y: Float, action: Int, id: Int) {
+        ensure()
+        runCatching { touchEvent(x, y, action, id) }
+    }
+
     private external fun keyDown(code: Int, pressed: Boolean)
     private external fun mouseDown(button: Int, pressed: Boolean)
     private external fun stickMove(x: Float, y: Float)
     private external fun hotbarSlot(slot: Int)
+    private external fun touchEvent(x: Float, y: Float, action: Int, id: Int)
 }

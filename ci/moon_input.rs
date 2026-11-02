@@ -15,6 +15,9 @@ pub(super) enum Event {
     Mouse(i32, bool),
     /// Стик: x, y в -1..1 (x вправо, y вниз).
     Stick(f32, f32),
+    /// Касание мимо кнопок слоя (клик меню, поворот камеры):
+    /// физические пиксели x, y; action = MotionEvent.actionMasked; id = палец.
+    Touch(f32, f32, i32, i32),
 }
 
 static QUEUE: OnceLock<Mutex<Vec<Event>>> = OnceLock::new();
