@@ -148,16 +148,33 @@ object Overlay {
      * (у NativeActivity ввод идёт через InputQueue), поэтому без пересылки меню и
      * поворот камеры перестают работать. Через очередь игры события приходят
      * обычными касаниями — с настоящим DeviceId и координатами.
+     *
+     * `InputQueue.sendInputEvent` — скрытый API (в android.jar его нет), поэтому идём
+     * через рефлексию: с targetSdk 28 такие методы доступны.
      */
     internal fun forwardToGame(event: android.view.MotionEvent) {
         val queue = dev.moonmc.moonmc.HorizonActivity.gameQueue ?: return
         runCatching {
-            queue.sendInputEvent(
-                android.view.MotionEvent.obtain(event),
-                Any(),
-                false,
-                android.view.InputQueue.FinishedInputEventCallback { _, _ -> },
+            val callbackClass = Class.forName("android.view.InputQueue\$FinishedInputEventCallback")
+            val callback = java.lang.reflect.Proxy.newProxyInstance(
+                callbackClass.classLoader,
+                arrayOf(callbackClass),
+            ) { _, method, _ ->
+                when (method.name) {
+                    "hashCode" -> 0
+                    "equals" -> false
+                    "toString" -> "MoonInputCallback"
+                    else -> null
+                }
+            }
+            val send = queue.javaClass.getMethod(
+                "sendInputEvent",
+                android.view.InputEvent::class.java,
+                Any::class.java,
+                java.lang.Boolean.TYPE,
+                callbackClass,
             )
+            send.invoke(queue, android.view.MotionEvent.obtain(event), Any(), false, callback)
         }
     }
 
