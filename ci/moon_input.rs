@@ -3,6 +3,7 @@
 //! Слой рисуется в отдельном окне, поэтому обычные касания до нативной поверхности
 //! не доходят. Kotlin кладёт события в очередь (JNI), а игра разбирает её раз в кадр
 //! и применяет как клавиши/кнопки/оси — так же, как это делает тач-слой порта.
+use std::collections::VecDeque;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use winit::keyboard::KeyCode;
@@ -20,11 +21,11 @@ pub(super) enum Event {
     Touch(f32, f32, i32, i32),
 }
 
-static QUEUE: OnceLock<Mutex<Vec<Event>>> = OnceLock::new();
+static QUEUE: OnceLock<Mutex<VecDeque<Event>>> = OnceLock::new();
 
-fn queue() -> MutexGuard<'static, Vec<Event>> {
+fn queue() -> MutexGuard<'static, VecDeque<Event>> {
     QUEUE
-        .get_or_init(|| Mutex::new(Vec::new()))
+        .get_or_init(|| Mutex::new(VecDeque::new()))
         .lock()
         .unwrap_or_else(|e| e.into_inner())
 }
@@ -32,12 +33,12 @@ fn queue() -> MutexGuard<'static, Vec<Event>> {
 pub(super) fn push(event: Event) {
     let mut q = queue();
     if q.len() < 256 {
-        q.push(event);
+        q.push_back(event);
     }
 }
 
 pub(super) fn drain() -> Vec<Event> {
-    std::mem::take(&mut *queue())
+    std::mem::take(&mut *queue()).into()
 }
 
 /// GLFW-код (Zalith/InputMap) → клавиша winit.

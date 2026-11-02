@@ -143,6 +143,25 @@ EDITS = [
     }
 """,
     ),
+    # Меню аккаунта (имя, вход/выход, смена) показывается сразу после титульного экрана:
+    # раньше блок ждал world-ready, и «смена аккаунтов» появлялась на 5-10 секунд позже
+    # (а вместе с ожиданием выглядела как полная зависшая пауза). Модель игрока сама
+    # ждёт готовности ресурсов внутри draw_player_figure.
+    (
+        pathlib.Path("crates/horizon-client/src/game/title_skin.rs"),
+        """    pub(super) fn draw_title_skin(&mut self, batch: &mut HudBatch) {
+        // The player's model comes with the world's resources, a moment after the title.
+        if !self.title_skin_shown() || !self.res.rest_ready() {
+            return;
+        }
+""",
+        """    pub(super) fn draw_title_skin(&mut self, batch: &mut HudBatch) {
+        // MoonMC: панель аккаунта рисуется сразу, без ожидания ресурсов (см. patch-game-home.py).
+        if !self.title_skin_shown() {
+            return;
+        }
+""",
+    ),
 ]
 
 
