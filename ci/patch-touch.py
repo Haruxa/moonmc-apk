@@ -101,6 +101,7 @@ def main() -> None:
 
 // MoonMC: JNI-точки входа из Compose-слоя управления (см. moon_input).
 #[allow(unsafe_code)]
+// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_moonmc_game_Native_key(
     _env: jni::JNIEnv,
@@ -112,6 +113,7 @@ pub extern "system" fn Java_dev_moonmc_game_Native_key(
 }
 
 #[allow(unsafe_code)]
+// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_moonmc_game_Native_mouse(
     _env: jni::JNIEnv,
@@ -123,6 +125,7 @@ pub extern "system" fn Java_dev_moonmc_game_Native_mouse(
 }
 
 #[allow(unsafe_code)]
+// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_moonmc_game_Native_stick(
     _env: jni::JNIEnv,
@@ -134,6 +137,7 @@ pub extern "system" fn Java_dev_moonmc_game_Native_stick(
 }
 
 #[allow(unsafe_code)]
+// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_moonmc_game_Native_hotbar(
     _env: jni::JNIEnv,
@@ -144,6 +148,7 @@ pub extern "system" fn Java_dev_moonmc_game_Native_hotbar(
 }
 
 #[allow(unsafe_code)]
+// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_moonmc_game_Native_touch(
     _env: jni::JNIEnv,
