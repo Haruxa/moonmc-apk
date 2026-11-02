@@ -58,8 +58,8 @@ abstract class ObservableWidget {
             return androidx.compose.ui.geometry.Rect(
                 position.x.toFloat(),
                 position.y.toFloat(),
-                position.x + internalRenderSize.width,
-                position.y + internalRenderSize.height,
+                (position.x + internalRenderSize.width).toFloat(),
+                (position.y + internalRenderSize.height).toFloat(),
             )
         }
 
