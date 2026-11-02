@@ -187,12 +187,20 @@ pub extern "system" fn Java_dev_moonmc_game_Native_keyboardDown(
         for event in crate::moon_input::drain() {
             use crate::moon_input::Event;
             match event {
-                // Клавиша идёт тем же путём, что и настоящая: mapped_key отдаёт
-                // её игре (self.keys — только состояние тач-слоя).
+                // Клавиша идёт тем же путём, что и настоящая: debug-клавиши (F3 и др.)
+                // движок ловит сам, остальные — через mapped_key.
                 Event::Key(code, pressed) => {
                     if let Some(key) = crate::moon_input::key_of(code) {
-                        if let Err(e) = self.mapped_key(key, pressed, false) {
-                            log::warn!("MoonMC: {key:?}: {e}");
+                        use horizon_client::debug_keys::KeyAction;
+                        let action = if pressed {
+                            KeyAction::Press
+                        } else {
+                            KeyAction::Release
+                        };
+                        if !self.debug_key(key, action) {
+                            if let Err(e) = self.mapped_key(key, pressed, false) {
+                                log::warn!("MoonMC: {key:?}: {e}");
+                            }
                         }
                     }
                 }
@@ -205,7 +213,7 @@ pub extern "system" fn Java_dev_moonmc_game_Native_keyboardDown(
                         } else {
                             winit::event::MouseButton::Right
                         };
-                        if self.captured {
+                        if self.captured || !self.touch_in_menu() {
                             if let Err(e) = self.play_mouse(mouse, pressed) {
                                 log::warn!("MoonMC: {mouse:?}: {e}");
                             }
@@ -238,10 +246,15 @@ pub extern "system" fn Java_dev_moonmc_game_Native_keyboardDown(
                 // Мир: палец крутит камеру, его короткий тап — удар/использовать.
                 // Меню: прежний путь — курсор, клик, колесо (листание списков).
                 Event::Touch(x, y, action, id) => {
-                    if self.captured {
+                    // Меню — по состояниию самого движка (титул/экраны/диалоги),
+                    // а не по захвату курсора: фокус окна на Android не гарантирован.
+                    if !self.touch_in_menu() {
                         let scale = self.gui_scale().map_or(1.0, |batch| batch.scale);
                         match crate::moon_input::finger_step(x, y, action, id) {
                             crate::moon_input::Step::Look(dx, dy) => {
+                                // Флаг для apply_mouse_look: поворот от моста применяется
+                                // даже без захвата курсора.
+                                self.touch.active = true;
                                 self.touch_turn(dx / scale, dy / scale, LOOK);
                             }
                             // Тап — удар: как левая кнопка мыши, нажали и отпустили.
@@ -257,9 +270,10 @@ pub extern "system" fn Java_dev_moonmc_game_Native_keyboardDown(
                         }
                     } else if let Some(window) = self.window.as_ref().map(|w| w.id()) {
                         let phase = match action {
-                            0 => winit::event::TouchPhase::Started,
-                            1 => winit::event::TouchPhase::Moved,
-                            2 => winit::event::TouchPhase::Ended,
+                            // MotionEvent: DOWN=0, UP=1, MOVE=2, CANCEL=3, POINTER_DOWN=5, POINTER_UP=6.
+                            0 | 5 => winit::event::TouchPhase::Started,
+                            2 => winit::event::TouchPhase::Moved,
+                            1 | 6 => winit::event::TouchPhase::Ended,
                             _ => winit::event::TouchPhase::Cancelled,
                         };
                         let touch = winit::event::Touch {
@@ -318,23 +332,6 @@ pub extern "system" fn Java_dev_moonmc_game_Native_keyboardDown(
         GAME.write_text(gtext)
         print("game.rs: старый HUD тач-слоя убран")
 
-    # в игре меню рисует Java, screen остаётся Playing: меню узнаём по отпущенному курсору
-    text = TOUCH.read_text()
-    if "!self.captured" not in text:
-        anchor = "    fn touch_in_menu(&self) -> bool {\n        self.pad_in_menu()"
-        if anchor in text:
-            text = text.replace(
-                anchor,
-                "    fn touch_in_menu(&self) -> bool {\n"
-                + "        // Меню в игре рисует Java, screen остаётся Playing; курсор при меню отпущен.\n"
-                + "        !self.captured\n"
-                + "            || self.pad_in_menu()",
-                1,
-            )
-            TOUCH.write_text(text)
-            print("touch.rs: меню узнаётся по отпущенному курсору")
-        else:
-            ERRORS.append("touch.rs: нет touch_in_menu")
     gtext = GAME.read_text()
     if "self.touch_frame(event_loop);" not in gtext:
         anchor = "    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {"
@@ -344,6 +341,28 @@ pub extern "system" fn Java_dev_moonmc_game_Native_keyboardDown(
             print("game.rs: кадр тач-слоя в about_to_wait")
         else:
             ERRORS.append("game.rs: нет about_to_wait")
+
+    # камера: поворот из нашего моста применяется и без захвата курсора
+    # (на Android фокус окна и grab не гарантированы), а только пока мы крутим.
+    gtext = GAME.read_text()
+    if "|| self.touch.active" not in gtext:
+        old = (
+            "        let pointer = self.captured || self.agent_pointer;\n"
+            + "        let grabbed = pointer && self.screen == Screen::Playing && self.player.is_some();\n"
+            + "        let active = self.focused || self.agent_pointer;"
+        )
+        if old in gtext:
+            gtext = gtext.replace(
+                old,
+                "        let pointer = self.captured || self.agent_pointer || self.touch.active;\n"
+                + "        let grabbed = pointer && self.screen == Screen::Playing && self.player.is_some();\n"
+                + "        let active = self.focused || self.agent_pointer || self.touch.active;",
+                1,
+            )
+            GAME.write_text(gtext)
+            print("game.rs: поворот от моста доходит до камеры")
+        else:
+            ERRORS.append("game.rs: нет apply_mouse_look")
 
     # 0. Касания и «назад»: при переносе порта на новый пин cherry-pick оставляет
     # window_event от движка (в нём нет WindowEvent::Touch), и тапы не доходят до игры.

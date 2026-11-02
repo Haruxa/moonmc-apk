@@ -85,8 +85,9 @@ fn distance(a: (f32, f32), b: (f32, f32)) -> f32 {
 pub(super) fn finger_step(x: f32, y: f32, action: i32, id: i32) -> Step {
     let mut slot = finger();
     match action {
-        // ACTION_DOWN
-        0 => {
+        // ACTION_DOWN / ACTION_POINTER_DOWN: жест ведёт первый палец
+        // (MotionEvent: DOWN=0, MOVE=2, UP=1, CANCEL=3, POINTER_DOWN=5, POINTER_UP=6).
+        0 | 5 => {
             if slot.is_some() {
                 return Step::None;
             }
@@ -100,7 +101,7 @@ pub(super) fn finger_step(x: f32, y: f32, action: i32, id: i32) -> Step {
             Step::None
         }
         // ACTION_MOVE
-        1 => {
+        2 => {
             let Some(f) = slot.as_mut() else {
                 return Step::None;
             };
@@ -116,8 +117,8 @@ pub(super) fn finger_step(x: f32, y: f32, action: i32, id: i32) -> Step {
                 Step::Look(dx, dy)
             }
         }
-        // ACTION_UP
-        2 => {
+        // ACTION_UP / ACTION_POINTER_UP
+        1 | 6 => {
             let Some(f) = slot.take() else {
                 return Step::None;
             };
@@ -224,28 +225,28 @@ mod tests {
     #[test]
     fn short_tap_is_attack() {
         assert_eq!(finger_step(10.0, 10.0, 0, 0), Step::None);
-        assert_eq!(finger_step(10.0, 10.0, 2, 0), Step::Tap);
+        assert_eq!(finger_step(10.0, 10.0, 1, 0), Step::Tap);
     }
 
     #[test]
     fn swipe_looks_and_is_not_a_tap() {
         assert_eq!(finger_step(10.0, 10.0, 0, 0), Step::None);
-        assert_eq!(finger_step(60.0, 10.0, 1, 0), Step::Look(50.0, 0.0));
-        assert_eq!(finger_step(60.0, 10.0, 2, 0), Step::None);
+        assert_eq!(finger_step(60.0, 10.0, 2, 0), Step::Look(50.0, 0.0));
+        assert_eq!(finger_step(60.0, 10.0, 1, 0), Step::None);
     }
 
     #[test]
     fn cancel_forgets_the_finger() {
         assert_eq!(finger_step(10.0, 10.0, 0, 0), Step::None);
         assert_eq!(finger_step(10.0, 10.0, 3, 0), Step::None);
-        assert_eq!(finger_step(10.0, 10.0, 2, 0), Step::None);
+        assert_eq!(finger_step(10.0, 10.0, 1, 0), Step::None);
     }
 
     #[test]
     fn second_finger_is_ignored() {
         assert_eq!(finger_step(10.0, 10.0, 0, 0), Step::None);
-        assert_eq!(finger_step(80.0, 80.0, 0, 1), Step::None);
-        assert_eq!(finger_step(60.0, 10.0, 1, 0), Step::Look(50.0, 0.0));
-        assert_eq!(finger_step(80.0, 80.0, 2, 1), Step::None);
+        assert_eq!(finger_step(80.0, 80.0, 5, 1), Step::None);
+        assert_eq!(finger_step(60.0, 10.0, 2, 0), Step::Look(50.0, 0.0));
+        assert_eq!(finger_step(80.0, 80.0, 6, 1), Step::None);
     }
 }
