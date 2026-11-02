@@ -44,6 +44,8 @@ object Overlay {
     private var dialog: Dialog? = null
     /** Открыта ли сейчас системная клавиатура (кнопка IME переключает). */
     private var imeShown = false
+    private var content: android.view.View? = null
+    private var host: OverlayHost? = null
 
     @JvmStatic
     fun attach(activity: Activity) {
@@ -108,6 +110,8 @@ object Overlay {
             MaterialTheme(colorScheme = darkColorScheme()) { Layer(activity) }
         }
         step(activity, "compose ok")
+        content = view
+        this.host = host
         host.addView(
             view,
             android.widget.FrameLayout.LayoutParams(
@@ -142,6 +146,20 @@ object Overlay {
         Native.keyboard(imeShown)
     }
 
+    /** Клавиатура занимает низ экрана: слой на это время не рисуется и не ловит касания,
+     * иначе его кнопки лежат поверх клавиатуры и печатать нельзя. */
+    private fun applyKeyboard(up: Boolean) {
+        host?.passthrough = up
+        content?.visibility = if (up) android.view.View.GONE else android.view.View.VISIBLE
+        dialog?.window?.let { window ->
+            if (up) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+            } else {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+            }
+        }
+    }
+
     /** Шаги запуска слоя: видно, до какого места дошло перед крашем. */
     private fun step(activity: Activity, text: String) {
         report(activity, "moonmc-layer-step.txt", text)
@@ -161,8 +179,8 @@ object Overlay {
     internal fun forwardToGame(
         event: android.view.MotionEvent,
         action: Int = event.actionMasked,
+        index: Int = event.actionIndex,
     ) {
-        val index = event.actionIndex
         Native.touch(
             event.getX(index),
             event.getY(index),
@@ -200,6 +218,14 @@ object Overlay {
     private fun Layer(activity: Activity) {
         val layout = remember { readLayout(activity) }
         var opened by remember { mutableStateOf(false) }
+
+        // Клавиатуру может открыть и сам движок (поле ввода в меню): состояние берём у него.
+        LaunchedEffect(Unit) {
+            while (true) {
+                applyKeyboard(runCatching { Native.keyboardShown() }.getOrDefault(imeShown))
+                kotlinx.coroutines.delay(250)
+            }
+        }
 
         val handler = remember {
             EventHandler { event: ClickEvent, pressed: Boolean ->
@@ -288,6 +314,8 @@ object Overlay {
         var dynamicResolution by remember { mutableStateOf(saved["dynamic_resolution"] ?: "on") }
         var hdr by remember { mutableStateOf(saved["hdr"] ?: "off") }
         var fpsCap by remember { mutableStateOf(saved["fps_cap"] ?: "60") }
+        val accounts = remember { readAccounts() }
+        var current by remember { mutableStateOf(runCatching { Native.accountName() }.getOrDefault("")) }
 
         fun store() = writePerf(
             activity,
@@ -332,6 +360,26 @@ object Overlay {
                     color = C(0xFF8CA0A7),
                     fontSize = 11.sp,
                 )
+                Text("Аккаунт", color = C(0xFFB9C8CE), fontSize = 12.sp)
+                Text(
+                    if (current.isBlank()) "не выбран" else current,
+                    color = C(0xFF9BE8BE),
+                    fontSize = 13.sp,
+                )
+                if (accounts.isEmpty()) {
+                    Text(
+                        "Список в /sdcard/MoonMC/accounts.json: [\"ник\", …]",
+                        color = C(0xFF8CA0A7),
+                        fontSize = 11.sp,
+                    )
+                } else {
+                    accounts.forEach { name ->
+                        TextButton(onClick = {
+                            Native.setAccount(name)
+                            current = name
+                        }) { Text(name, fontSize = 12.sp) }
+                    }
+                }
             }
         }
     }
@@ -347,6 +395,20 @@ object Overlay {
             Switch(checked = checked, onCheckedChange = onChange)
         }
     }
+
+    /** Аккаунты из общего списка: строки или объекты с "name". */
+    private fun readAccounts(): List<String> = runCatching {
+        val file = File("/sdcard/MoonMC/accounts.json")
+        if (!file.isFile) return@runCatching emptyList()
+        val array = org.json.JSONArray(file.readText())
+        (0 until array.length()).mapNotNull { i ->
+            when (val item = array.opt(i)) {
+                is String -> item.ifBlank { null }
+                is org.json.JSONObject -> item.optString("name").ifBlank { null }
+                else -> null
+            }
+        }
+    }.getOrDefault(emptyList())
 
     private fun readPerf(activity: Activity): Map<String, String> = runCatching {
         gameDir(PERF).readLines().mapNotNull { line ->
@@ -378,8 +440,11 @@ private class OverlayHost(context: android.content.Context) :
     private val savedStateController = androidx.savedstate.SavedStateRegistryController.create(this)
     override val viewModelStore = androidx.lifecycle.ViewModelStore()
 
-    /** Жест пересылается игре (true) или съеден кнопками слоя (false). */
-    private var forwarding: Boolean? = null
+    /** Жесты, отданные игре (камера/тап), по id пальцев. */
+    private val gamePointers = mutableSetOf<Int>()
+
+    /** Окно не должно ловить касания: открыта клавиатура. */
+    var passthrough = false
 
     override val lifecycle: androidx.lifecycle.Lifecycle get() = lifecycleRegistry
 
@@ -399,30 +464,86 @@ private class OverlayHost(context: android.content.Context) :
     }
 
     override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
-        if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
-            Overlay.widgetTouched = false
-            forwarding = null
+        if (passthrough) return false
+        when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN,
+            android.view.MotionEvent.ACTION_POINTER_DOWN -> {
+                // Судьба пальца решается один раз, на его нажатии: кнопка под пальцем
+                // успевает зарегистрироваться в Compose, остальное уходит игре.
+                Overlay.widgetTouched = false
+                super.dispatchTouchEvent(event)
+                val id = event.getPointerId(event.actionIndex)
+                if (Overlay.widgetTouched) gamePointers.remove(id) else gamePointers.add(id)
+                if (id in gamePointers) Overlay.forwardToGame(event, index = event.actionIndex)
+                return true
+            }
+            android.view.MotionEvent.ACTION_CANCEL -> {
+                Overlay.forwardToGame(event, android.view.MotionEvent.ACTION_CANCEL)
+                super.dispatchTouchEvent(event)
+                gamePointers.clear()
+                return true
+            }
+            android.view.MotionEvent.ACTION_MOVE,
+            android.view.MotionEvent.ACTION_UP,
+            android.view.MotionEvent.ACTION_POINTER_UP -> {
+                val ids = IntArray(event.pointerCount) { event.getPointerId(it) }
+                val ui = ids.filter { it !in gamePointers }
+                val game = ids.filter { it in gamePointers }
+                // Кнопки видят только свои пальцы: жест, ушедший камере,
+                // их не нажимает и не обрывает поворот.
+                if (ui.isNotEmpty()) super.dispatchTouchEvent(subset(event, ui))
+                for (id in game) forwardGamePointer(event, id)
+                if (event.actionMasked != android.view.MotionEvent.ACTION_MOVE) {
+                    gamePointers.remove(event.getPointerId(event.actionIndex))
+                }
+                return true
+            }
         }
-        super.dispatchTouchEvent(event)
-        // Судим по жесту целиком: палец, попавший в кнопку, игре не пересылаем,
-        // палец по пустому месту — пересылаем целиком до отпускания.
-        if (forwarding == null) {
-            forwarding = !Overlay.widgetTouched
-        } else if (forwarding == true && Overlay.widgetTouched) {
-            // Палец лёг на джойстик или кнопку: игре его отдаём как отменённый,
-            // иначе её собственный тач-слой тянет стик вместе с нашим.
-            Overlay.forwardToGame(event, android.view.MotionEvent.ACTION_CANCEL)
-            forwarding = false
-            return true
+        return super.dispatchTouchEvent(event)
+    }
+
+    /** Касание игровых пальцев по одному: камера и тап д?льше разбираются в движке. */
+    private fun forwardGamePointer(event: android.view.MotionEvent, id: Int) {
+        val index = event.findPointerIndex(id)
+        if (index < 0) return
+        val changed = event.actionIndex == index
+        val action = when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_UP -> android.view.MotionEvent.ACTION_UP
+            android.view.MotionEvent.ACTION_POINTER_UP ->
+                if (changed) android.view.MotionEvent.ACTION_UP else android.view.MotionEvent.ACTION_MOVE
+            else -> android.view.MotionEvent.ACTION_MOVE
         }
-        if (forwarding == true) {
-            Overlay.forwardToGame(event)
+        Overlay.forwardToGame(event, action, index)
+    }
+
+    /** Событие только с указателями `ids` (остальные не должны его видеть). */
+    private fun subset(
+        event: android.view.MotionEvent,
+        ids: List<Int>,
+    ): android.view.MotionEvent {
+        val props = Array(ids.size) { android.view.MotionEvent.PointerProperties() }
+        val coords = Array(ids.size) { android.view.MotionEvent.PointerCoords() }
+        ids.forEachIndexed { i, id ->
+            val from = event.findPointerIndex(id)
+            event.getPointerProperties(from, props[i])
+            event.getPointerCoords(from, coords[i])
         }
-        if (event.actionMasked == android.view.MotionEvent.ACTION_UP ||
-            event.actionMasked == android.view.MotionEvent.ACTION_CANCEL
-        ) {
-            forwarding = null
+        val changed = ids.indexOf(event.getPointerId(event.actionIndex))
+        val shift = android.view.MotionEvent.ACTION_POINTER_INDEX_SHIFT
+        val action = when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_UP ->
+                if (ids.size == 1) android.view.MotionEvent.ACTION_UP
+                else if (changed >= 0) android.view.MotionEvent.ACTION_POINTER_UP or (changed shl shift)
+                else android.view.MotionEvent.ACTION_MOVE
+            android.view.MotionEvent.ACTION_POINTER_UP ->
+                if (changed >= 0) android.view.MotionEvent.ACTION_POINTER_UP or (changed shl shift)
+                else android.view.MotionEvent.ACTION_MOVE
+            else -> android.view.MotionEvent.ACTION_MOVE
         }
-        return true
+        return android.view.MotionEvent.obtain(
+            event.downTime, event.eventTime, action, ids.size, props, coords,
+            event.metaState, event.buttonState, event.xPrecision, event.yPrecision,
+            event.deviceId, event.edgeFlags, event.source, event.flags,
+        )
     }
 }

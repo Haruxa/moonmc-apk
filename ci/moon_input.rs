@@ -4,12 +4,13 @@
 //! не доходят. Kotlin кладёт события в очередь (JNI), а игра разбирает её раз в кадр
 //! и применяет как клавиши/кнопки/оси — так же, как это делает тач-слой порта.
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use winit::keyboard::KeyCode;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(super) enum Event {
     /// Клавиша в терминах GLFW (как у Zalith/InputMap): нажали/отпустили.
     Key(i32, bool),
@@ -22,6 +23,8 @@ pub(super) enum Event {
     Touch(f32, f32, i32, i32),
     /// Системная клавиатура Android: показать/скрыть (кнопка IME слоя).
     Keyboard(bool),
+    /// Вошедший аккаунт (или None — вышли): имя игрока для движка.
+    Account(Option<String>),
 }
 
 static QUEUE: OnceLock<Mutex<VecDeque<Event>>> = OnceLock::new();
@@ -42,6 +45,33 @@ pub(super) fn push(event: Event) {
 
 pub(super) fn drain() -> Vec<Event> {
     std::mem::take(&mut *queue()).into()
+}
+
+/// Клавиатура сейчас на экране: слой управления на это время прячется.
+static KEYBOARD: OnceLock<AtomicBool> = OnceLock::new();
+
+pub(super) fn set_keyboard_up(on: bool) {
+    KEYBOARD.get_or_init(|| AtomicBool::new(false)).store(on, Ordering::Relaxed);
+}
+
+pub(super) fn keyboard_up() -> bool {
+    KEYBOARD.get_or_init(|| AtomicBool::new(false)).load(Ordering::Relaxed)
+}
+
+/// Имя игрока, которое язык держит сейчас (его же показывает панель аккаунта).
+static ACCOUNT: OnceLock<Mutex<String>> = OnceLock::new();
+
+pub(super) fn set_account(name: &str) {
+    *ACCOUNT.get_or_init(|| Mutex::new(String::new())).lock().unwrap_or_else(|e| e.into_inner()) =
+        name.to_owned();
+}
+
+pub(super) fn account() -> String {
+    ACCOUNT
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .map(|n| n.clone())
+        .unwrap_or_default()
 }
 
 /// Жест пальца в мире: камера и тап, без старого тач-слоя порта.

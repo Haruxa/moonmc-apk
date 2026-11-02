@@ -171,6 +171,44 @@ pub extern "system" fn Java_dev_moonmc_game_Native_keyboardDown(
 ) {
     crate::moon_input::push(crate::moon_input::Event::Keyboard(on != 0));
 }
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
+pub extern "system" fn Java_dev_moonmc_game_Native_keyboardIsShown(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+) -> jni::sys::jboolean {
+    if crate::moon_input::keyboard_up() { 1 } else { 0 }
+}
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
+pub extern "system" fn Java_dev_moonmc_game_Native_setAccountNative(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    name: jni::objects::JString,
+) {
+    let name: String = env
+        .get_string(&name)
+        .map(|s| s.into())
+        .unwrap_or_default();
+    crate::moon_input::push(crate::moon_input::Event::Account(Some(name)));
+}
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
+pub extern "system" fn Java_dev_moonmc_game_Native_accountNameNative(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+) -> jni::sys::jstring {
+    match env.new_string(crate::moon_input::account()) {
+        Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
 """
                 if "Java_dev_moonmc_game_Native_keyDown" not in root:
                     root = root + jni
@@ -291,8 +329,14 @@ pub extern "system" fn Java_dev_moonmc_game_Native_keyboardDown(
                     self.touch.keyboard = on;
                     horizon_client::event_loop::set_keyboard(on);
                 }
+                // Выбранный в панели аккаунт — сразу игрок.
+                Event::Account(name) => {
+                    self.options.player_name = name;
+                }
             }
-        }"""
+        }
+        crate::moon_input::set_keyboard_up(self.touch.keyboard);
+        crate::moon_input::set_account(&self.options.player_name());"""
             text = text.replace(anchor, body, 1)
             TOUCH.write_text(text)
             print("touch.rs: очередь моста разбирается в кадре")

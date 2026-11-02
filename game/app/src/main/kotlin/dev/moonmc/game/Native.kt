@@ -47,10 +47,31 @@ object Native {
         runCatching { keyboardDown(on) }
     }
 
+    /** Открыта ли клавиатура сейчас: её открывает и сам движок, в полях ввода. */
+    fun keyboardShown(): Boolean {
+        ensure()
+        return runCatching { keyboardIsShown() }.getOrDefault(false)
+    }
+
+    /** Имя текущего аккаунта ("" — не вошли). */
+    fun accountName(): String {
+        ensure()
+        return runCatching { accountNameNative() }.getOrDefault("")
+    }
+
+    /** Сменить аккаунт: имя становится игроком сразу, без перезапуска. */
+    fun setAccount(name: String) {
+        ensure()
+        runCatching { setAccountNative(name) }
+    }
+
     private external fun keyDown(code: Int, pressed: Boolean)
     private external fun mouseDown(button: Int, pressed: Boolean)
     private external fun stickMove(x: Float, y: Float)
     private external fun hotbarSlot(slot: Int)
     private external fun touchEvent(x: Float, y: Float, action: Int, id: Int)
     private external fun keyboardDown(on: Boolean)
+    private external fun keyboardIsShown(): Boolean
+    private external fun accountNameNative(): String
+    private external fun setAccountNative(name: String)
 }
