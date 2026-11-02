@@ -6,10 +6,17 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -32,7 +39,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color as C
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
@@ -130,7 +139,7 @@ object Overlay {
         val view = ComposeView(activity)
         view.setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
         view.setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) { Layer(activity) }
+            MoonTheme(activity) { Layer(activity) }
         }
         step(activity, "compose ok")
         content = view
@@ -239,6 +248,31 @@ object Overlay {
         val left = screenPx - panelPx - panelEndGap
         val top = (screenPy - panelPy) / 2f
         return x >= left && x <= screenPx - panelEndGap && y >= top && y <= top + panelPy
+    }
+
+    /** Material 3 Expressive: цвета из системы (Android 12+), иначе фирменная схема Moon. */
+    @Composable
+    internal fun MoonTheme(context: android.content.Context, content: @Composable () -> Unit) {
+        val scheme = if (android.os.Build.VERSION.SDK_INT >= 31) {
+            runCatching { dynamicDarkColorScheme(context) }.getOrNull()
+        } else {
+            null
+        } ?: darkColorScheme(
+            primary = C(0xFF9BE8BE),
+            onPrimary = C(0xFF0B2019),
+            primaryContainer = C(0xFF1E3A2E),
+            onPrimaryContainer = C(0xFFC9F5DC),
+            secondary = C(0xFF87B8A0),
+            surface = C(0xFF0B120F),
+            onSurface = C(0xFFE8F1EC),
+            surfaceVariant = C(0xFF26332D),
+            onSurfaceVariant = C(0xFFB9C8CE),
+            surfaceContainer = C(0xFF151A18),
+            surfaceContainerHigh = C(0xFF1A201D),
+            surfaceContainerLowest = C(0xFF070B09),
+            outline = C(0xFF4A5A53),
+        )
+        MaterialTheme(colorScheme = scheme, content = content)
     }
 
     /** Шаги запуска слоя: видно, до какого места дошло перед крашем. */
@@ -392,6 +426,9 @@ object Overlay {
                 // слоёв с visibilityType in_game. В меню игровые кнопки скрыты.
                 isCursorGrabbing = !inMenu,
                 checkOccupiedPointers = { false },
+                // Взятый виджетом палец — наш с первого касания (джойстик тоже).
+                onOccupiedPointer = { widgetPointers.add(it.value.toInt()) },
+                onReleasePointer = { widgetPointers.remove(it.value.toInt()) },
             ) {
                 // мир под контролами: их слой рисует только кнопки и джойстик
             }
@@ -402,32 +439,34 @@ object Overlay {
                     .offset { IntOffset(gear.x.roundToInt(), gear.y.roundToInt()) }
                     .size(48.dp)
                     .clip(CircleShape)
-                    .background(C(0xE6151A18))
-                    .border(1.dp, C(0x339BE8BE), CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.94f))
+                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), CircleShape)
                     .pointerInput(Unit) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
-                            var moved = 0f
-                            var last = down.position
+                            // Стартовая позиция и дельта узла: бокс едет под пальцем,
+                            // и разница позиций в его координатах не накапливается.
+                            val start = gear
+                            var drag = Offset.Zero
+                            var moved = false
                             while (true) {
                                 val event = awaitPointerEvent()
                                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                val delta = change.position - last
-                                last = change.position
-                                moved += delta.getDistance()
-                                if (moved > 8f) {
+                                drag += change.positionChange()
+                                if (!moved && drag.getDistance() > 8f) moved = true
+                                if (moved) {
                                     change.consume()
                                     gear = Offset(
-                                        (gear.x + delta.x).coerceIn(0f, (screenW - gearSize).coerceAtLeast(0f)),
-                                        (gear.y + delta.y).coerceIn(0f, (screenH - gearSize).coerceAtLeast(0f)),
+                                        (start.x + drag.x).coerceIn(0f, (screenW - gearSize).coerceAtLeast(0f)),
+                                        (start.y + drag.y).coerceIn(0f, (screenH - gearSize).coerceAtLeast(0f)),
                                     )
                                 }
                                 if (!change.pressed) {
-                                    if (moved <= 8f) opened = !opened
+                                    if (!moved) opened = !opened
                                     break
                                 }
                             }
-                            if (moved > 8f) writeGear(activity, gear)
+                            if (moved) writeGear(activity, gear)
                         }
                     },
                 contentAlignment = Alignment.Center,
@@ -435,7 +474,7 @@ object Overlay {
                 Icon(
                     Icons.Filled.Settings,
                     contentDescription = null,
-                    tint = C(0xFF9BE8BE),
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(24.dp),
                 )
             }
@@ -459,21 +498,74 @@ object Overlay {
     /** Пока движок готовит ресурсы: луна Moon и что именно происходит. */
     @Composable
     private fun LoadingScreen() {
+        val scheme = MaterialTheme.colorScheme
+        // Дыхание знака и мерцание звёзд: expressive-движение, без тяжёлых эффектов.
+        val breath = rememberInfiniteTransition(label = "moon")
+        val scale by breath.animateFloat(
+            initialValue = 0.94f,
+            targetValue = 1.06f,
+            animationSpec = infiniteRepeatable(
+                tween(durationMillis = 1600, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                RepeatMode.Reverse,
+            ),
+            label = "scale",
+        )
+        val twinkle by breath.animateFloat(
+            initialValue = 0.35f,
+            targetValue = 0.9f,
+            animationSpec = infiniteRepeatable(tween(2200), RepeatMode.Reverse),
+            label = "twinkle",
+        )
         Box(
-            Modifier.fillMaxSize().background(C(0xFF0B120F)),
+            Modifier.fillMaxSize().background(scheme.surfaceContainerLowest),
             contentAlignment = Alignment.Center,
         ) {
+            Canvas(Modifier.fillMaxSize()) {
+                // Пятна-звёзды по экрану: те же точки, что и в оффлайн-сплаше.
+                val dots = 26
+                for (i in 0 until dots) {
+                    val gx = ((i * 73) % 100) / 100f
+                    val gy = ((i * 37) % 100) / 100f
+                    drawCircle(
+                        color = scheme.primary.copy(alpha = twinkle * 0.35f * (0.4f + gx)),
+                        radius = 2.2f + 3f * gy,
+                        center = Offset(size.width * gx, size.height * gy),
+                    )
+                }
+            }
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                Text("MoonMC", color = C(0xFF9BE8BE), fontSize = 30.sp)
+                Box(
+                    Modifier
+                        .size(84.dp)
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                        }
+                        .clip(CircleShape)
+                        .background(scheme.primaryContainer),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("☾", color = scheme.onPrimaryContainer, fontSize = 40.sp)
+                }
+                Text(
+                    "MoonMC",
+                    color = scheme.onSurface,
+                    style = MaterialTheme.typography.headlineMedium,
+                )
                 CircularProgressIndicator(
-                    color = C(0xFF9BE8BE),
+                    color = scheme.primary,
+                    trackColor = scheme.surfaceContainerHigh,
                     strokeWidth = 3.dp,
                     modifier = Modifier.size(38.dp),
                 )
-                Text("готовим ресурсы…", color = C(0xFFB9C8CE), fontSize = 13.sp)
+                Text(
+                    "готовим ресурсы…",
+                    color = scheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             }
         }
     }
@@ -495,7 +587,7 @@ object Overlay {
                 topEnd = 16.dp,
                 bottomEnd = 16.dp,
             ),
-            color = C(0xF5101513),
+            color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.96f),
             tonalElevation = 6.dp,
         ) {
             Row(Modifier.fillMaxSize()) {
@@ -511,12 +603,12 @@ object Overlay {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             if (tab == 0) "Графика" else "Профили",
-                            color = C(0xFF9BE8BE),
+                            color = MaterialTheme.colorScheme.primary,
                             fontSize = 18.sp,
                         )
                         Spacer(Modifier.weight(1f))
                         IconButton(onClick = onClose) {
-                            Icon(Icons.Filled.Close, "Закрыть", tint = C(0xFF8CA0A7))
+                            Icon(Icons.Filled.Close, "Закрыть", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     if (tab == 0) GraphicsTab(activity) else ProfilesTab()
@@ -535,14 +627,15 @@ object Overlay {
         Surface(
             onClick = onClick,
             shape = CircleShape,
-            color = if (selected) C(0xFF9BE8BE) else C(0x00000000),
+            color = if (selected) MaterialTheme.colorScheme.primary else C(0x00000000),
             modifier = Modifier.size(44.dp),
         ) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Icon(
                     icon,
                     contentDescription = description,
-                    tint = if (selected) C(0xFF11201A) else C(0xFFB9C8CE),
+                    tint = if (selected) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(22.dp),
                 )
             }
@@ -570,7 +663,7 @@ object Overlay {
                 dynamicResolution = if (it) "on" else "off"; store()
             }
             Toggle("HDR-вывод", hdr == "on") { hdr = if (it) "on" else "off"; store() }
-            Text("Лимит FPS", color = C(0xFFB9C8CE), fontSize = 12.sp)
+            Text("Лимит FPS", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("30", "60", "90", "0").forEach { value ->
                     FilterChip(
@@ -582,7 +675,7 @@ object Overlay {
             }
             Text(
                 "Управление — из Zalith Launcher 2: раскладка touch/zalith/layout.json",
-                color = C(0xFF8CA0A7),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 11.sp,
             )
         }
@@ -614,7 +707,7 @@ object Overlay {
             placeholder = { Text("ник", fontSize = 13.sp) },
             leadingIcon = {
                 IconButton(onClick = { add() }) {
-                    Icon(Icons.Filled.Add, "Добавить", tint = C(0xFF9BE8BE))
+                    Icon(Icons.Filled.Add, "Добавить", tint = MaterialTheme.colorScheme.primary)
                 }
             },
             modifier = Modifier.fillMaxWidth(),
@@ -646,7 +739,7 @@ object Overlay {
         if (profiles.list.isEmpty()) {
             Text(
                 "Введи ник и нажми + — аккаунт появится здесь",
-                color = C(0xFF8CA0A7),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 11.sp,
             )
         }
@@ -684,7 +777,8 @@ object Overlay {
         Surface(
             onClick = onPick,
             shape = RoundedCornerShape(18.dp),
-            color = if (active) C(0xFF1E3A2E) else C(0xFF1A201D),
+            color = if (active) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceContainerHigh,
             tonalElevation = 1.dp,
         ) {
             Row(
@@ -693,7 +787,8 @@ object Overlay {
             ) {
                 Text(
                     profile.name,
-                    color = if (active) C(0xFF9BE8BE) else C(0xFFE8F1EC),
+                    color = if (active) MaterialTheme.colorScheme.onPrimaryContainer
+                    else MaterialTheme.colorScheme.onSurface,
                     fontSize = 14.sp,
                 )
                 Spacer(Modifier.weight(1f))
@@ -701,7 +796,8 @@ object Overlay {
                     Icon(
                         Icons.Filled.Star,
                         "Закрепить",
-                        tint = if (profile.pinned) C(0xFF9BE8BE) else C(0x55E8F1EC),
+                        tint = if (profile.pinned) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
                         modifier = Modifier.size(20.dp),
                     )
                 }
@@ -709,7 +805,7 @@ object Overlay {
                     Icon(
                         Icons.Filled.Close,
                         "Удалить",
-                        tint = C(0xFF8CA0A7),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp),
                     )
                 }
@@ -724,7 +820,7 @@ object Overlay {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text(label, color = C(0xFFE8F1EC), fontSize = 13.sp)
+            Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
             Switch(checked = checked, onCheckedChange = onChange)
         }
     }
@@ -819,8 +915,15 @@ private class OverlayHost(context: android.content.Context) :
     private val savedStateController = androidx.savedstate.SavedStateRegistryController.create(this)
     override val viewModelStore = androidx.lifecycle.ViewModelStore()
 
-    /** Жесты, отданные игре (камера/тап), по id пальцев. */
+    /** Пальцы, которые взял наш слой (джойстик, кнопки): их ведёт Compose, а не игра. */
+    internal val widgetPointers = mutableSetOf<Int>()
+
+    /** Пальцы, отданные игре (камера/меню), по id. */
     private val gamePointers = mutableSetOf<Int>()
+
+    /** Где палец нажал и сколько прошёл: длинный жест — не клик. */
+    private val gameStart = mutableMapOf<Int, android.graphics.PointF>()
+    private val gameMoved = mutableMapOf<Int, Float>()
 
     /** Окно не должно ловить касания: открыта клавиатура. */
     var passthrough = false
@@ -847,23 +950,32 @@ private class OverlayHost(context: android.content.Context) :
         when (event.actionMasked) {
             android.view.MotionEvent.ACTION_DOWN,
             android.view.MotionEvent.ACTION_POINTER_DOWN -> {
-                // Судьба пальца решается один раз, на его нажатии: кнопка/наша панель
-                // под пальцем — это UI, остальное уходит игре.
-                Overlay.widgetTouched = false
-                super.dispatchTouchEvent(event)
                 val index = event.actionIndex
                 val id = event.getPointerId(index)
-                // Панель открыта — касания не уходят в игру вообще.
-                val ui = Overlay.widgetTouched || Overlay.panelOpen ||
-                    Overlay.hitUi(event.getX(index), event.getY(index))
-                if (ui) gamePointers.remove(id) else gamePointers.add(id)
-                if (!ui) Overlay.forwardToGame(event, index = index)
+                val x = event.getX(index)
+                val y = event.getY(index)
+                Overlay.widgetTouched = false
+                // Слой успевает взять палец внутри super (onOccupiedPointer): джойстик
+                // и кнопки опознаются с первого касания.
+                super.dispatchTouchEvent(event)
+                val ui = Overlay.panelOpen || id in Overlay.widgetPointers ||
+                    Overlay.widgetTouched || Overlay.hitUi(x, y)
+                if (ui) {
+                    gamePointers.remove(id)
+                } else {
+                    gamePointers.add(id)
+                    gameStart[id] = android.graphics.PointF(x, y)
+                    gameMoved[id] = 0f
+                    Overlay.forwardToGame(event, index = index)
+                }
                 return true
             }
             android.view.MotionEvent.ACTION_CANCEL -> {
                 Overlay.forwardToGame(event, android.view.MotionEvent.ACTION_CANCEL)
                 super.dispatchTouchEvent(event)
                 gamePointers.clear()
+                gameStart.clear()
+                gameMoved.clear()
                 return true
             }
             android.view.MotionEvent.ACTION_MOVE,
@@ -872,6 +984,14 @@ private class OverlayHost(context: android.content.Context) :
                 val ids = IntArray(event.pointerCount) { event.getPointerId(it) }
                 val ui = ids.filter { it !in gamePointers }
                 val game = ids.filter { it in gamePointers }
+                for (id in game) {
+                    val i = event.findPointerIndex(id)
+                    val start = gameStart[id]
+                    if (i < 0 || start == null) continue
+                    val dx = event.getX(i) - start.x
+                    val dy = event.getY(i) - start.y
+                    gameMoved[id] = kotlin.math.hypot(dx, dy)
+                }
                 // Кнопки видят только свои пальцы: жест, ушедший камере,
                 // их не нажимает и не обрывает поворот.
                 when {
@@ -883,7 +1003,10 @@ private class OverlayHost(context: android.content.Context) :
                     }
                 }
                 if (event.actionMasked != android.view.MotionEvent.ACTION_MOVE) {
-                    gamePointers.remove(event.getPointerId(event.actionIndex))
+                    val id = event.getPointerId(event.actionIndex)
+                    gamePointers.remove(id)
+                    gameStart.remove(id)
+                    gameMoved.remove(id)
                 }
                 return true
             }
@@ -891,15 +1014,21 @@ private class OverlayHost(context: android.content.Context) :
         return super.dispatchTouchEvent(event)
     }
 
-    /** Касание игровых пальцев по одному: камера и тап д?льше разбираются в движке. */
+    /** Касание игровых пальцев по одному: камера и тап дальше разбираются в движке. */
     private fun forwardGamePointer(event: android.view.MotionEvent, id: Int) {
         val index = event.findPointerIndex(id)
         if (index < 0) return
         val changed = event.actionIndex == index
+        val slop = 24f * resources.displayMetrics.density
+        val dragged = (gameMoved[id] ?: 0f) > slop
         val action = when (event.actionMasked) {
-            android.view.MotionEvent.ACTION_UP -> android.view.MotionEvent.ACTION_UP
+            android.view.MotionEvent.ACTION_UP ->
+                if (dragged) android.view.MotionEvent.ACTION_CANCEL
+                else android.view.MotionEvent.ACTION_UP
             android.view.MotionEvent.ACTION_POINTER_UP ->
-                if (changed) android.view.MotionEvent.ACTION_UP else android.view.MotionEvent.ACTION_MOVE
+                if (!changed) android.view.MotionEvent.ACTION_MOVE
+                else if (dragged) android.view.MotionEvent.ACTION_CANCEL
+                else android.view.MotionEvent.ACTION_UP
             else -> android.view.MotionEvent.ACTION_MOVE
         }
         Overlay.forwardToGame(event, action, index)

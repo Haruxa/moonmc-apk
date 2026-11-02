@@ -257,6 +257,20 @@ def main() -> int:
             if name.endswith(".java"):
                 shutil.copyfile(os.path.join(SPLASH, name), os.path.join(java_dir, name))
                 print(f"экран загрузки: {name} -> android/java")
+        # Содержимое экрана — Compose: Kotlin-файл лежит в Gradle-модуле рядом с оверлеем.
+        # Патчер идёт из `src/`, а Gradle-проект лежит в корне репозитория.
+        repo_root = os.path.dirname(ROOT)
+        kotlin_dir = os.path.join(
+            repo_root, "game", "app", "src", "main", "kotlin", "dev", "moonmc", "game"
+        )
+        try:
+            os.makedirs(kotlin_dir, exist_ok=True)
+            for name in sorted(os.listdir(SPLASH)):
+                if name.endswith(".kt"):
+                    shutil.copyfile(os.path.join(SPLASH, name), os.path.join(kotlin_dir, name))
+                    print(f"экран загрузки: {name} -> game/app/src/main/kotlin")
+        except OSError as error:
+            print(f"::warning::экран загрузки: не скопировал Kotlin-часть: {error}")
 
     code = pathlib.Path(ACTIVITY).read_text()
     if "nativeLibraryDir" not in code:
