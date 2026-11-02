@@ -57,7 +57,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
  * Java-хост (`MoonSplash`) держит только диалог: содержимое и владельцы Compose живут здесь.
  */
 object SplashUi {
-    private val currentStep = MutableStateFlow("Preparing the game…")
+    internal val currentStep = MutableStateFlow("Preparing the game…")
 
     /** Шаг подготовки пришёл из движка. */
     @JvmStatic

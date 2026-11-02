@@ -236,6 +236,9 @@ object Overlay {
     @Volatile
     internal var panelEndGap = 0f
 
+    /** Пальцы, которые взял наш слой (джойстик, кнопки): их ведёт Compose, а не игра. */
+    internal val widgetPointers = mutableSetOf<Int>()
+
     /** Палец лёг на наш интерфейс: такое касание игре не пересылаем. */
     internal fun hitUi(x: Float, y: Float): Boolean {
         if (gearSide > 0f && gearAt.x >= 0f &&
@@ -914,9 +917,6 @@ private class OverlayHost(context: android.content.Context) :
     private val lifecycleRegistry = androidx.lifecycle.LifecycleRegistry(this)
     private val savedStateController = androidx.savedstate.SavedStateRegistryController.create(this)
     override val viewModelStore = androidx.lifecycle.ViewModelStore()
-
-    /** Пальцы, которые взял наш слой (джойстик, кнопки): их ведёт Compose, а не игра. */
-    internal val widgetPointers = mutableSetOf<Int>()
 
     /** Пальцы, отданные игре (камера/меню), по id. */
     private val gamePointers = mutableSetOf<Int>()
