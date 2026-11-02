@@ -242,13 +242,20 @@ object Overlay {
             }
 
             if (opened) {
-                SettingsPanel(activity) { opened = false }
+                SettingsPanel(
+                    activity,
+                    Modifier.align(Alignment.TopCenter),
+                ) { opened = false }
             }
         }
     }
 
     @Composable
-    private fun SettingsPanel(activity: Activity, onClose: () -> Unit) {
+    private fun SettingsPanel(
+        activity: Activity,
+        modifier: Modifier = Modifier,
+        onClose: () -> Unit,
+    ) {
         val saved = remember { readPerf(activity) }
         var dynamicResolution by remember { mutableStateOf(saved["dynamic_resolution"] ?: "on") }
         var hdr by remember { mutableStateOf(saved["hdr"] ?: "off") }
@@ -264,8 +271,7 @@ object Overlay {
         )
 
         Surface(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
+            modifier = modifier
                 .padding(top = 52.dp)
                 .width(320.dp),
             shape = RoundedCornerShape(24.dp),
