@@ -17,6 +17,9 @@ import androidx.compose.ui.graphics.Color as C
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.movtery.layer_controller.ControlBoxLayout
 import com.movtery.layer_controller.event.ClickEvent
 import com.movtery.layer_controller.event.EventHandler
@@ -310,9 +313,9 @@ private class OverlayHost(context: android.content.Context) :
     init {
         // Compose ищет владельцев по ViewTree-тегам (не по интерфейсам вьюхи):
         // без этого падает с "ViewTreeLifecycleOwner not found" на первом кадре.
-        androidx.lifecycle.setViewTreeLifecycleOwner(this, this)
-        androidx.savedstate.setViewTreeSavedStateRegistryOwner(this, this)
-        androidx.lifecycle.setViewTreeViewModelStoreOwner(this, this)
+        setViewTreeLifecycleOwner(this)
+        setViewTreeSavedStateRegistryOwner(this)
+        setViewTreeViewModelStoreOwner(this)
         // Сначала attach, потом restore: иначе SavedStateRegistry бросает исключение.
         savedStateController.performAttach()
         savedStateController.performRestore(null)
