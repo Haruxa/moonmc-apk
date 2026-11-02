@@ -53,15 +53,26 @@ object Overlay {
     }
 
     /**
-     * Куда класть отчёты: сначала внешняя папка приложения (доступна без разрешений),
-     * потом папка игры — если разрешение на файлы уже выдано.
+     * Куда класть отчёты: папка "Загрузки" через MediaStore (доступна без разрешений
+     * и видна другим приложениям — иначе краш нечем диагностировать), потом папка игры.
      */
     private fun report(activity: Activity, name: String, text: String) {
         runCatching {
-            val dir = activity.getExternalFilesDir(null)
-            if (dir != null) {
-                dir.mkdirs()
-                File(dir, name).writeText(text)
+            val resolver = activity.contentResolver
+            val downloads = android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            resolver.delete(
+                downloads,
+                "${android.provider.MediaStore.MediaColumns.DISPLAY_NAME}=?",
+                arrayOf(name),
+            )
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
+                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Download")
+            }
+            val uri = resolver.insert(downloads, values)
+            if (uri != null) {
+                resolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
             }
         }
         runCatching {
@@ -297,6 +308,11 @@ private class OverlayHost(context: android.content.Context) :
         get() = savedStateController.savedStateRegistry
 
     init {
+        // Compose ищет владельцев по ViewTree-тегам (не по интерфейсам вьюхи):
+        // без этого падает с "ViewTreeLifecycleOwner not found" на первом кадре.
+        androidx.lifecycle.setViewTreeLifecycleOwner(this, this)
+        androidx.savedstate.setViewTreeSavedStateRegistryOwner(this, this)
+        androidx.lifecycle.setViewTreeViewModelStoreOwner(this, this)
         // Сначала attach, потом restore: иначе SavedStateRegistry бросает исключение.
         savedStateController.performAttach()
         savedStateController.performRestore(null)

@@ -106,26 +106,50 @@ OVERLAY = '''        // MoonMC: любая необработанная ошиб
                 java.io.StringWriter text = new java.io.StringWriter();
                 error.printStackTrace(new java.io.PrintWriter(text));
                 String body = thread.getName() + "\\n" + text;
-                // Сначала своя внешняя папка: она доступна без разрешения на все файлы,
-                // потом папка игры (если разрешение уже выдано).
-                boolean written = false;
-                java.io.File dir = getExternalFilesDir(null);
-                if (dir != null) {
-                    dir.mkdirs();
-                    try (java.io.FileWriter out =
-                             new java.io.FileWriter(new java.io.File(dir, "moonmc-crash.txt"))) {
-                        out.write(body);
-                        written = true;
+                // Папка "Загрузки" через MediaStore: доступна без разрешений и видна
+                // другим приложениям (внешняя папка приложения для них закрыта).
+                try {
+                    android.content.ContentResolver resolver = getContentResolver();
+                    android.net.Uri downloads =
+                        android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+                    resolver.delete(downloads,
+                        android.provider.MediaStore.MediaColumns.DISPLAY_NAME + "=?",
+                        new String[] {"moonmc-crash.txt"});
+                    android.content.ContentValues values = new android.content.ContentValues();
+                    values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME,
+                        "moonmc-crash.txt");
+                    values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain");
+                    values.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Download");
+                    android.net.Uri uri = resolver.insert(downloads, values);
+                    if (uri != null) {
+                        java.io.OutputStream out = resolver.openOutputStream(uri);
+                        if (out != null) {
+                            out.write(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                            out.close();
+                        }
                     }
+                } catch (Throwable ignoredMedia) {
+                    // нет доступа к MediaStore — пробуем остальное
                 }
+                // Папка игры — когда разрешение на файлы уже выдано.
+                boolean written = false;
                 java.io.File game = new java.io.File("/sdcard/MoonMC/horizon");
                 if (game.mkdirs() || game.isDirectory()) {
                     try (java.io.FileWriter out =
                              new java.io.FileWriter(new java.io.File(game, "moonmc-crash.txt"))) {
-                        if (!written) {
+                        out.write(body);
+                        written = true;
+                    } catch (Throwable ignoredCopy) {
+                    }
+                }
+                if (!written) {
+                    java.io.File dir = getExternalFilesDir(null);
+                    if (dir != null) {
+                        dir.mkdirs();
+                        try (java.io.FileWriter out =
+                                 new java.io.FileWriter(new java.io.File(dir, "moonmc-crash.txt"))) {
                             out.write(body);
                         }
-                    } catch (Throwable ignoredCopy) {
                     }
                 }
             } catch (Throwable ignoredWrite) {
