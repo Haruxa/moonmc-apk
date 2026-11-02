@@ -217,15 +217,27 @@ object Overlay {
                 // мир под контролами: их слой рисует только кнопки и джойстик
             }
 
-            // шестерня: панель настроек
+            // капелька с шестерёнкой: маленькая, сверху, с тенью — как в Zalith
             Surface(
-                modifier = Modifier.padding(12.dp).size(44.dp),
-                shape = RoundedCornerShape(16.dp),
-                color = C(0xE6101418),
+                modifier = Modifier.padding(top = 10.dp, start = 10.dp).size(40.dp),
+                shape = RoundedCornerShape(
+                    topStartPercent = 50,
+                    topEndPercent = 50,
+                    bottomEndPercent = 50,
+                    bottomStartPercent = 12,
+                ),
+                color = C(0xF014211C),
+                border = androidx.compose.foundation.BorderStroke(1.dp, C(0x339BE8BE)),
+                shadowElevation = 8.dp,
                 onClick = { opened = !opened },
             ) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Filled.Settings, contentDescription = null, tint = C(0xFF9BE8BE))
+                    Icon(
+                        Icons.Filled.Settings,
+                        contentDescription = null,
+                        tint = C(0xFF9BE8BE),
+                        modifier = Modifier.size(22.dp),
+                    )
                 }
             }
 
