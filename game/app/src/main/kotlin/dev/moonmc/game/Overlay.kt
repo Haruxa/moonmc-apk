@@ -467,7 +467,7 @@ object Overlay {
                 panelEndGap = endGap
                 // Рамки виджетов слоя: джойстик и кнопки опознаются с первого касания.
                 val bounds = ArrayList<androidx.compose.ui.geometry.Rect>(8)
-                layout?.layers?.forEach { layer ->
+                layout?.layers?.value?.forEach { layer ->
                     layer.normalButtons.value.forEach { bounds.add(it.renderBounds) }
                     layer.joystickButtons.value.forEach { bounds.add(it.renderBounds) }
                 }
