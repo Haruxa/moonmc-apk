@@ -100,9 +100,9 @@ def main() -> None:
                 jni = """
 
 // MoonMC: JNI-точки входа из Compose-слоя управления (см. moon_input).
-// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
+/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 pub extern "system" fn Java_dev_moonmc_game_Native_keyDown(
     _env: jni::JNIEnv,
     _class: jni::objects::JClass,
@@ -112,9 +112,9 @@ pub extern "system" fn Java_dev_moonmc_game_Native_keyDown(
     crate::moon_input::push(crate::moon_input::Event::Key(code, pressed != 0));
 }
 
-// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
+/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 pub extern "system" fn Java_dev_moonmc_game_Native_mouseDown(
     _env: jni::JNIEnv,
     _class: jni::objects::JClass,
@@ -124,9 +124,9 @@ pub extern "system" fn Java_dev_moonmc_game_Native_mouseDown(
     crate::moon_input::push(crate::moon_input::Event::Mouse(button, pressed != 0));
 }
 
-// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
+/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 pub extern "system" fn Java_dev_moonmc_game_Native_stickMove(
     _env: jni::JNIEnv,
     _class: jni::objects::JClass,
@@ -136,9 +136,9 @@ pub extern "system" fn Java_dev_moonmc_game_Native_stickMove(
     crate::moon_input::push(crate::moon_input::Event::Stick(x, y));
 }
 
-// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
+/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 pub extern "system" fn Java_dev_moonmc_game_Native_hotbarSlot(
     _env: jni::JNIEnv,
     _class: jni::objects::JClass,
@@ -147,9 +147,9 @@ pub extern "system" fn Java_dev_moonmc_game_Native_hotbarSlot(
     crate::moon_input::push(crate::moon_input::Event::Mouse(-100 - slot, true));
 }
 
-// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
+/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 pub extern "system" fn Java_dev_moonmc_game_Native_touchEvent(
     _env: jni::JNIEnv,
     _class: jni::objects::JClass,
