@@ -458,6 +458,52 @@ fn setup(
     path.write_text(text)
     print("android_setup.rs: права JRE, отчёт и пересборка при неисполняемом java")
 
+def patch_prepared() -> None:
+    """Готовность = маркер на /sdcard И исполняемый `java` в приватной папке.
+
+    Удаление приложения стирает приватную папку с JRE, а маркер на /sdcard остаётся:
+    без этой проверки игра стартовала бы без рантайма. Повторная подготовка дешёвая —
+    импорт ресурсов переиспользуется (`artifacts::reuse_verified`).
+    """
+    path = pathlib.Path("crates/horizon-client/src/android_setup.rs")
+    if not path.is_file():
+        return
+    text = path.read_text()
+    if "moon_java_ready" in text:
+        print("android_setup.rs: проверка готовности уже наложена")
+        return
+    old = """/// The resources are prepared.
+pub fn prepared(home: &Path) -> bool {
+    home.join(RESOURCES).join("horizon-resources.json").is_file()
+}"""
+    new = """/// The resources are prepared.
+pub fn prepared(home: &Path) -> bool {
+    if !home.join(RESOURCES).join("horizon-resources.json").is_file() {
+        return false;
+    }
+    // MoonMC: Java живёт в приватной папке приложения — её стирает удаление APK,
+    // а маркер на /sdcard остаётся. Без java подготовка нужна заново (быстро).
+    let jre = std::env::var_os("HORIZON_PRIVATE_HOME")
+        .map(std::path::PathBuf::from)
+        .map(|dir| dir.join("jre"))
+        .unwrap_or_else(|| home.join("jre"));
+    moon_java_ready(&jre)
+}
+
+/// Исполняемый ли `bin/java`: тот же признак, что у пересборки JRE.
+fn moon_java_ready(jre: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(jre.join("bin/java"))
+        .map(|m| m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}"""
+    if old not in text:
+        print("::warning::android_setup.rs: не нашёл prepared(), проверку готовности пропускаю")
+        return
+    path.write_text(text.replace(old, new, 1))
+    print("android_setup.rs: готовность = маркер + исполняемый java")
+
+
 def main() -> int:
     failed = False
     for path, original, patched in EDITS:
@@ -480,6 +526,7 @@ def main() -> int:
     # 2. Права JRE и каталог библиотек под Gradle-сборку
     patch_library_dir()
     patch_jre_bits()
+    patch_prepared()
 
     # 2a. Порт как крейт рабочего пространства
     patch_workspace()
