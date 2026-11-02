@@ -23,12 +23,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.unit.IntSize
 import com.movtery.layer_controller.data.ButtonPosition
 import com.movtery.layer_controller.data.ButtonSize
 import com.movtery.layer_controller.data.VisibilityType
 import com.movtery.layer_controller.event.EventHandler
+import com.movtery.layer_controller.utils.getWidgetPosition
 
 /**
  * 可观察的控件包装基类
@@ -51,17 +53,18 @@ abstract class ObservableWidget {
 
     /**
      * MoonMC: рамка виджета на экране в пикселях — по ней решается, наш это палец или игре.
+     * Позиция хранится в процентах, размер — в пикселях, поэтому нужен размер экрана:
+     * считаем той же функцией, которой библиотека ставит виджеты на экран.
      */
-    val renderBounds: androidx.compose.ui.geometry.Rect
-        get() {
-            val position = internalRenderPosition
-            return androidx.compose.ui.geometry.Rect(
-                position.x.toFloat(),
-                position.y.toFloat(),
-                (position.x + internalRenderSize.width).toFloat(),
-                (position.y + internalRenderSize.height).toFloat(),
-            )
-        }
+    fun renderBounds(screenSize: IntSize): Rect {
+        val position = getWidgetPosition(internalRenderPosition, internalRenderSize, screenSize)
+        return Rect(
+            position.x,
+            position.y,
+            position.x + internalRenderSize.width,
+            position.y + internalRenderSize.height,
+        )
+    }
 
     /**
      * 组件的内部渲染位置属性

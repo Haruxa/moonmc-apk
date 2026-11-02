@@ -230,17 +230,6 @@ pub extern "system" fn Java_dev_moonmc_game_Native_readyNative(
 ) -> jni::sys::jboolean {
     if crate::moon_input::ready() { 1 } else { 0 }
 }
-
-#[allow(unsafe_code)]
-#[unsafe(no_mangle)]
-/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
-pub extern "system" fn Java_dev_moonmc_game_Native_scrollBy(
-    _env: jni::JNIEnv,
-    _class: jni::objects::JClass,
-    dy: jni::sys::jfloat,
-) {
-    crate::moon_input::push(crate::moon_input::Event::Scroll(dy));
-}
 """
                 if "Java_dev_moonmc_game_Native_keyDown" not in root:
                     root = root + jni
@@ -364,23 +353,6 @@ pub extern "system" fn Java_dev_moonmc_game_Native_scrollBy(
                 // Выбранный в панели аккаунт — сразу игрок.
                 Event::Account(name) => {
                     self.options.player_name = name;
-                }
-                // Колесо в меню: списки листаются без нажатий по пунктам.
-                Event::Scroll(dy) => {
-                    if let Some(id) = self.window.as_ref().map(|w| w.id()) {
-                        let delta = winit::event::MouseScrollDelta::PixelDelta(
-                            winit::dpi::PhysicalPosition::new(0.0, f64::from(dy)),
-                        );
-                        self.window_event(
-                            event_loop,
-                            id,
-                            winit::event::WindowEvent::MouseWheel {
-                                device_id: winit::event::DeviceId::dummy(),
-                                delta,
-                                phase: winit::event::TouchPhase::Moved,
-                            },
-                        );
-                    }
                 }
             }
         }

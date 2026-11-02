@@ -77,12 +77,6 @@ object Native {
         return runCatching { readyNative() }.getOrDefault(false)
     }
 
-    /** Колесо мыши в меню: положительное значение — вниз по списку. */
-    fun scroll(dy: Float) {
-        ensure()
-        runCatching { scrollBy(dy) }
-    }
-
     private external fun keyDown(code: Int, pressed: Boolean)
     private external fun mouseDown(button: Int, pressed: Boolean)
     private external fun stickMove(x: Float, y: Float)
@@ -94,5 +88,4 @@ object Native {
     private external fun setAccountNative(name: String)
     private external fun inMenuNative(): Boolean
     private external fun readyNative(): Boolean
-    private external fun scrollBy(dy: Float)
 }

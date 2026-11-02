@@ -45,6 +45,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.setViewTreeLifecycleOwner
@@ -175,17 +176,6 @@ object Overlay {
         step(activity, "shown")
     }
 
-    /** Колесо в меню: шаги прокрутки для движка. */
-    internal fun scroll(dy: Float) {
-        Native.scroll(dy)
-    }
-
-    /** Короткий тап в меню: нажали и отпустили в той же точке. */
-    internal fun tapAt(x: Float, y: Float, id: Int) {
-        Native.touch(x, y, android.view.MotionEvent.ACTION_DOWN, id)
-        Native.touch(x, y, android.view.MotionEvent.ACTION_UP, id)
-    }
-
     /** Клавиатура Android: кнопка IME их раскладки. Открывает её сам движок
      * (event_loop::set_keyboard), иначе ввод в чат не доходит. */
     private fun toggleIme() {
@@ -257,10 +247,6 @@ object Overlay {
     @Volatile
     internal var panelOpen = false
 
-    /** Движок сейчас в меню/титуле: касания там — колесо и чистый тап. */
-    @Volatile
-    internal var inMenuNow = false
-
     @Volatile
     internal var screenPx = 0f
 
@@ -279,6 +265,9 @@ object Overlay {
     /** Рамки виджетов слоя (джойстик, кнопки) в пикселях: их касания наши. */
     @Volatile
     internal var widgetBounds: List<androidx.compose.ui.geometry.Rect> = emptyList()
+
+    /** Последние записанные в отчёт рамки: файл перезаписываем только на смене. */
+    private var boundsText = ""
 
     /** Пальцы, которые взял наш слой (джойстик, кнопки): их ведёт Compose, а не игра. */
     internal val widgetPointers = mutableSetOf<Int>()
@@ -405,7 +394,6 @@ object Overlay {
                 applyKeyboard(keyboard && !openedNow)
                 val menu = runCatching { Native.inMenu() }.getOrDefault(false)
                 if (menu != inMenu) inMenu = menu
-                inMenuNow = menu
                 if (!ready) {
                     // Страховка: старый .so без readyNative не должен прятать слой навсегда.
                     val loaded = runCatching { Native.ready() }.getOrDefault(false)
@@ -456,6 +444,21 @@ object Overlay {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val screenW = constraints.maxWidth.toFloat()
             val screenH = constraints.maxHeight.toFloat()
+            val screen = IntSize(screenW.toInt(), screenH.toInt())
+            // В меню касания — движка (его же свайп/тап), рамки виджетов там не нужны:
+            // спрятанные кнопки иначе забирали бы тапы по пунктам под собой.
+            val world = !inMenu
+            // Рамки виджетов слоя читаем в композиции, а не в SideEffect: размеры
+            // известны после раскладки, и такое чтение пересобирает блок, когда они готовы.
+            val bounds = ArrayList<androidx.compose.ui.geometry.Rect>(8)
+            if (world) {
+                layout?.layers?.value?.forEach { layer ->
+                    layer.normalButtons.value.forEach { bounds.add(it.renderBounds(screen)) }
+                    layer.joystickButtons.value.forEach { bounds.add(it.renderBounds(screen)) }
+                }
+            }
+            // Нулевые — ещё не разложенные виджеты: такой палец остаётся игре.
+            val shown = bounds.filter { it.width > 0f && it.height > 0f }
             SideEffect {
                 gearAt = gear
                 gearSide = gearSize
@@ -465,13 +468,16 @@ object Overlay {
                 panelPx = panelW
                 panelPy = panelH
                 panelEndGap = endGap
-                // Рамки виджетов слоя: джойстик и кнопки опознаются с первого касания.
-                val bounds = ArrayList<androidx.compose.ui.geometry.Rect>(8)
-                layout?.layers?.value?.forEach { layer ->
-                    layer.normalButtons.value.forEach { bounds.add(it.renderBounds) }
-                    layer.joystickButtons.value.forEach { bounds.add(it.renderBounds) }
+                widgetBounds = shown
+                // Факты для разбора жалоб на касания: пишем один раз на смену рамок.
+                val text = shown.joinToString("\n") {
+                    "${it.left.roundToInt()},${it.top.roundToInt()}," +
+                        "${it.width.roundToInt()},${it.height.roundToInt()}"
                 }
-                widgetBounds = bounds
+                if (text != boundsText) {
+                    boundsText = text
+                    if (text.isNotEmpty()) report(activity, "moonmc-widgets.txt", text)
+                }
             }
             LaunchedEffect(screenW, screenH) {
                 if (gear.x < 0f) {
@@ -981,10 +987,6 @@ private class OverlayHost(context: android.content.Context) :
     private val gameStart = mutableMapOf<Int, android.graphics.PointF>()
     private val gameMoved = mutableMapOf<Int, Float>()
 
-    /** Меню: откуда палец начал и сколько шагов колеса уже отдано. */
-    private val menuStartY = mutableMapOf<Int, Float>()
-    private val menuSent = mutableMapOf<Int, Int>()
-
     /** Окно не должно ловить касания: открыта клавиатура. */
     var passthrough = false
 
@@ -1026,9 +1028,8 @@ private class OverlayHost(context: android.content.Context) :
                     gamePointers.add(id)
                     gameStart[id] = android.graphics.PointF(x, y)
                     gameMoved[id] = 0f
-                    // В меню движок из жеста делает клик: туда идут только колесо и тап.
-                    if (Overlay.inMenuNow) menuScroll(event, id, index)
-                    else Overlay.forwardToGame(event, index = index)
+                    // Меню движок разбирает сам: свайп — колесо, короткий тап — клик.
+                    Overlay.forwardToGame(event, index = index)
                 }
                 return true
             }
@@ -1080,10 +1081,6 @@ private class OverlayHost(context: android.content.Context) :
     private fun forwardGamePointer(event: android.view.MotionEvent, id: Int) {
         val index = event.findPointerIndex(id)
         if (index < 0) return
-        if (Overlay.inMenuNow) {
-            menuScroll(event, id, index)
-            return
-        }
         val changed = event.actionIndex == index
         val slop = 24f * resources.displayMetrics.density
         val dragged = (gameMoved[id] ?: 0f) > slop
@@ -1098,36 +1095,6 @@ private class OverlayHost(context: android.content.Context) :
             else -> android.view.MotionEvent.ACTION_MOVE
         }
         Overlay.forwardToGame(event, action, index)
-    }
-
-    /** Меню: свайп — шаги колеса, короткий тап — настоящий клик. */
-    private fun menuScroll(event: android.view.MotionEvent, id: Int, index: Int) {
-        val step = 24f * resources.displayMetrics.density
-        val y = event.getY(index)
-        when (event.actionMasked) {
-            android.view.MotionEvent.ACTION_DOWN,
-            android.view.MotionEvent.ACTION_POINTER_DOWN -> {
-                menuStartY[id] = y
-                menuSent[id] = 0
-            }
-            android.view.MotionEvent.ACTION_MOVE -> {
-                val start = menuStartY[id] ?: return
-                val steps = ((y - start) / step).toInt()
-                val sent = menuSent[id] ?: 0
-                if (steps != sent) {
-                    Overlay.scroll((steps - sent) * 40f)
-                    menuSent[id] = steps
-                }
-            }
-            android.view.MotionEvent.ACTION_UP,
-            android.view.MotionEvent.ACTION_POINTER_UP -> {
-                val start = menuStartY[id]
-                val moved = if (start == null) 0f else kotlin.math.abs(y - start)
-                if (moved < step) Overlay.tapAt(event.getX(index), y, id)
-                menuStartY.remove(id)
-                menuSent.remove(id)
-            }
-        }
     }
 
     /** Событие только с указателями `ids` (остальные не должны его видеть). */
