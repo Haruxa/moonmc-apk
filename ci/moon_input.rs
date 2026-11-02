@@ -25,6 +25,8 @@ pub(super) enum Event {
     Keyboard(bool),
     /// Вошедший аккаунт (или None — вышли): имя игрока для движка.
     Account(Option<String>),
+    /// Колесо в меню: положительное — вниз по списку (пиксели прокрутки).
+    Scroll(f32),
 }
 
 static QUEUE: OnceLock<Mutex<VecDeque<Event>>> = OnceLock::new();

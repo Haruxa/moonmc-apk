@@ -50,6 +50,20 @@ abstract class ObservableWidget {
     internal var internalRenderSize by mutableStateOf(IntSize.Zero)
 
     /**
+     * MoonMC: рамка виджета на экране в пикселях — по ней решается, наш это палец или игре.
+     */
+    val renderBounds: androidx.compose.ui.geometry.Rect
+        get() {
+            val position = internalRenderPosition
+            return androidx.compose.ui.geometry.Rect(
+                position.x.toFloat(),
+                position.y.toFloat(),
+                position.x + internalRenderSize.width,
+                position.y + internalRenderSize.height,
+            )
+        }
+
+    /**
      * 组件的内部渲染位置属性
      */
     internal abstract val internalRenderPosition: ButtonPosition

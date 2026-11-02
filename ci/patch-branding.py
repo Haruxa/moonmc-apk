@@ -95,6 +95,8 @@ NEW_KEYBOARD = '''            if (splash != null) {
                 splash = null;
                 preparing = false;
             }
+            // MoonMC: окно слоя управления прячется, пока клавиатура на экране.
+            OverlayBridge.gameKeyboard(show);
             if (show) {
                 input.reset();'''
 

@@ -481,13 +481,14 @@ pub fn prepared(home: &Path) -> bool {
     if !home.join(RESOURCES).join("horizon-resources.json").is_file() {
         return false;
     }
-    // MoonMC: Java живёт в приватной папке приложения — её стирает удаление APK,
-    // а маркер на /sdcard остаётся. Без java подготовка нужна заново (быстро).
-    let jre = std::env::var_os("HORIZON_PRIVATE_HOME")
+    // MoonMC: Java живёт в приватной папке приложения (её стирает удаление APK),
+    // но может лежать и рядом с игрой: готово, если исполняемый java нашёлся хоть где-то.
+    if moon_java_ready(&home.join("jre")) {
+        return true;
+    }
+    std::env::var_os("HORIZON_PRIVATE_HOME")
         .map(std::path::PathBuf::from)
-        .map(|dir| dir.join("jre"))
-        .unwrap_or_else(|| home.join("jre"));
-    moon_java_ready(&jre)
+        .is_some_and(|dir| moon_java_ready(&dir.join("jre")))
 }
 
 /// Исполняемый ли `bin/java`: тот же признак, что у пересборки JRE.
