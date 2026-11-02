@@ -345,7 +345,7 @@ pub extern "system" fn Java_dev_moonmc_game_Native_keyboardDown(
     # камера: поворот из нашего моста применяется и без захвата курсора
     # (на Android фокус окна и grab не гарантированы), а только пока мы крутим.
     gtext = GAME.read_text()
-    if "|| self.touch.active" not in gtext:
+    if "|| self.touch_active()" not in gtext:
         old = (
             "        let pointer = self.captured || self.agent_pointer;\n"
             + "        let grabbed = pointer && self.screen == Screen::Playing && self.player.is_some();\n"
@@ -354,9 +354,9 @@ pub extern "system" fn Java_dev_moonmc_game_Native_keyboardDown(
         if old in gtext:
             gtext = gtext.replace(
                 old,
-                "        let pointer = self.captured || self.agent_pointer || self.touch.active;\n"
+                "        let pointer = self.captured || self.agent_pointer || self.touch_active();\n"
                 + "        let grabbed = pointer && self.screen == Screen::Playing && self.player.is_some();\n"
-                + "        let active = self.focused || self.agent_pointer || self.touch.active;",
+                + "        let active = self.focused || self.agent_pointer || self.touch_active();",
                 1,
             )
             GAME.write_text(gtext)
