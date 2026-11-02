@@ -71,6 +71,12 @@ object Native {
         return runCatching { inMenuNative() }.getOrDefault(false)
     }
 
+    /** Движок догрузил ресурсы: до этого показываем экран загрузки. */
+    fun ready(): Boolean {
+        ensure()
+        return runCatching { readyNative() }.getOrDefault(false)
+    }
+
     private external fun keyDown(code: Int, pressed: Boolean)
     private external fun mouseDown(button: Int, pressed: Boolean)
     private external fun stickMove(x: Float, y: Float)
@@ -81,4 +87,5 @@ object Native {
     private external fun accountNameNative(): String
     private external fun setAccountNative(name: String)
     private external fun inMenuNative(): Boolean
+    private external fun readyNative(): Boolean
 }

@@ -401,6 +401,13 @@ final class MoonSplash extends Dialog {
                 canvas.drawText(lines.get(i), cx,
                     startY + lineHeight * i + lineHeight * 0.72f, text);
             }
+            // Разовая подготовка: следующий запуск идёт сразу в игру.
+            text.setColor(0x7A93A8A0);
+            text.setTextSize(unit * 0.016f);
+            text.setLetterSpacing(0.02f);
+            canvas.drawText("One-time setup — next launches go straight to the game", cx,
+                startY + lineHeight * lines.size() + unit * 0.036f, text);
+            text.setLetterSpacing(0f);
         }
 
         /** Низ экрана: имя, версия и движок (Nightly). */

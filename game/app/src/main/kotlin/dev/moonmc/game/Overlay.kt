@@ -33,8 +33,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color as C
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
@@ -204,12 +202,44 @@ object Overlay {
         }
     }
 
-    /** Прямоугольники наших элементов (шестерня, панель) в пикселях экрана. */
+    /** Шестерня и панель в пикселях: их касания наши, а не игры. */
     @Volatile
-    internal var uiRects: List<android.graphics.Rect> = emptyList()
+    internal var gearAt = Offset(-1f, -1f)
 
-    /** Палец лёг на наш интерфейс, а не на мимо: такое касание съедает Compose. */
-    internal fun hitUi(x: Float, y: Float): Boolean = uiRects.any { it.contains(x.toInt(), y.toInt()) }
+    @Volatile
+    internal var gearSide = 0f
+
+    @Volatile
+    internal var panelOpen = false
+
+    @Volatile
+    internal var screenPx = 0f
+
+    @Volatile
+    internal var screenPy = 0f
+
+    @Volatile
+    internal var panelPx = 0f
+
+    @Volatile
+    internal var panelPy = 0f
+
+    @Volatile
+    internal var panelEndGap = 0f
+
+    /** Палец лёг на наш интерфейс: такое касание игре не пересылаем. */
+    internal fun hitUi(x: Float, y: Float): Boolean {
+        if (gearSide > 0f && gearAt.x >= 0f &&
+            x >= gearAt.x && x <= gearAt.x + gearSide &&
+            y >= gearAt.y && y <= gearAt.y + gearSide
+        ) {
+            return true
+        }
+        if (!panelOpen || panelPx <= 0f) return false
+        val left = screenPx - panelPx - panelEndGap
+        val top = (screenPy - panelPy) / 2f
+        return x >= left && x <= screenPx - panelEndGap && y >= top && y <= top + panelPy
+    }
 
     /** Шаги запуска слоя: видно, до какого места дошло перед крашем. */
     private fun step(activity: Activity, text: String) {
@@ -274,10 +304,15 @@ object Overlay {
         var inMenu by remember { mutableStateOf(false) }
         var gear by remember { mutableStateOf(readGear(activity)) }
         val gearSize = with(density) { 48.dp.toPx() }
-        val panelRect = remember { mutableStateOf<android.graphics.Rect?>(null) }
+        val panelW = with(density) { 380.dp.toPx() }
+        val panelH = with(density) { 440.dp.toPx() }
+        val endGap = with(density) { 8.dp.toPx() }
         val openedNow by rememberUpdatedState(opened)
+        // Пока движок готовит ресурсы, вместо слоя — экран загрузки.
+        var ready by remember { mutableStateOf(false) }
+        val startedAt = remember { android.os.SystemClock.elapsedRealtime() }
 
-        // Клавиатуру и меню открывает сам движок: берём состояние у него.
+        // Клавиатуру, меню и готовность движка берём у него самого.
         // Панель открыта — клавиатура нужна для нашего поля, слой не прячем.
         LaunchedEffect(Unit) {
             while (true) {
@@ -285,25 +320,17 @@ object Overlay {
                 applyKeyboard(keyboard && !openedNow)
                 val menu = runCatching { Native.inMenu() }.getOrDefault(false)
                 if (menu != inMenu) inMenu = menu
+                if (!ready) {
+                    // Страховка: старый .so без readyNative не должен прятать слой навсегда.
+                    val loaded = runCatching { Native.ready() }.getOrDefault(false)
+                    if (loaded || android.os.SystemClock.elapsedRealtime() - startedAt > 8_000) {
+                        ready = true
+                    }
+                }
                 kotlinx.coroutines.delay(250)
             }
         }
-        LaunchedEffect(opened) {
-            panelFocus(opened)
-            if (!opened) panelRect.value = null
-        }
-        SideEffect {
-            val rects = ArrayList<android.graphics.Rect>(2)
-            val r = gearSize / 2f
-            rects.add(
-                android.graphics.Rect(
-                    (gear.x - r).toInt(), (gear.y - r).toInt(),
-                    (gear.x + r).toInt(), (gear.y + r).toInt(),
-                ),
-            )
-            panelRect.value?.let { rects.add(it) }
-            uiRects = rects
-        }
+        LaunchedEffect(opened) { panelFocus(opened) }
 
         val handler = remember {
             EventHandler { event: ClickEvent, pressed: Boolean ->
@@ -334,9 +361,25 @@ object Overlay {
             }
         }
 
+        // Движок ещё грузит ресурсы: показываем свой экран вместо мёртвых кнопок.
+        if (!ready) {
+            LoadingScreen()
+            return
+        }
+
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val screenW = constraints.maxWidth.toFloat()
             val screenH = constraints.maxHeight.toFloat()
+            SideEffect {
+                gearAt = gear
+                gearSide = gearSize
+                panelOpen = opened
+                screenPx = screenW
+                screenPy = screenH
+                panelPx = panelW
+                panelPy = panelH
+                panelEndGap = endGap
+            }
             LaunchedEffect(screenW, screenH) {
                 if (gear.x < 0f) {
                     gear = Offset(screenW - gearSize - 24f, screenH * 0.32f)
@@ -408,14 +451,29 @@ object Overlay {
                     tab = tab,
                     onTab = { tab = it },
                     onClose = { opened = false },
-                    modifier = Modifier.onGloballyPositioned { info ->
-                        val bounds = info.boundsInRoot()
-                        panelRect.value = android.graphics.Rect(
-                            bounds.left.toInt(), bounds.top.toInt(),
-                            bounds.right.toInt(), bounds.bottom.toInt(),
-                        )
-                    },
                 )
+            }
+        }
+    }
+
+    /** Пока движок готовит ресурсы: луна Moon и что именно происходит. */
+    @Composable
+    private fun LoadingScreen() {
+        Box(
+            Modifier.fillMaxSize().background(C(0xFF0B120F)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Text("MoonMC", color = C(0xFF9BE8BE), fontSize = 30.sp)
+                CircularProgressIndicator(
+                    color = C(0xFF9BE8BE),
+                    strokeWidth = 3.dp,
+                    modifier = Modifier.size(38.dp),
+                )
+                Text("готовим ресурсы…", color = C(0xFFB9C8CE), fontSize = 13.sp)
             }
         }
     }
@@ -795,7 +853,9 @@ private class OverlayHost(context: android.content.Context) :
                 super.dispatchTouchEvent(event)
                 val index = event.actionIndex
                 val id = event.getPointerId(index)
-                val ui = Overlay.widgetTouched || Overlay.hitUi(event.getX(index), event.getY(index))
+                // Панель открыта — касания не уходят в игру вообще.
+                val ui = Overlay.widgetTouched || Overlay.panelOpen ||
+                    Overlay.hitUi(event.getX(index), event.getY(index))
                 if (ui) gamePointers.remove(id) else gamePointers.add(id)
                 if (!ui) Overlay.forwardToGame(event, index = index)
                 return true

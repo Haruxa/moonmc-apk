@@ -20,6 +20,7 @@ TOUCH = CLIENT / "game/touch.rs"
 GAME = CLIENT / "game.rs"
 MODULE = CLIENT / "game/touch_layout.rs"
 MENU = CLIENT / "game/touch_menu.rs"
+STARTUP = CLIENT / "game/startup_menu.rs"
 
 
 ERRORS: list[str] = []
@@ -219,6 +220,16 @@ pub extern "system" fn Java_dev_moonmc_game_Native_inMenuNative(
 ) -> jni::sys::jboolean {
     if crate::moon_input::in_menu() { 1 } else { 0 }
 }
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
+pub extern "system" fn Java_dev_moonmc_game_Native_readyNative(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+) -> jni::sys::jboolean {
+    if crate::moon_input::ready() { 1 } else { 0 }
+}
 """
                 if "Java_dev_moonmc_game_Native_keyDown" not in root:
                     root = root + jni
@@ -386,6 +397,24 @@ pub extern "system" fn Java_dev_moonmc_game_Native_inMenuNative(
         gtext = gtext.replace("\n            self.draw_touch(&mut batch);", "", 1)
         GAME.write_text(gtext)
         print("game.rs: старый HUD тач-слоя убран")
+
+    # готовность движка для экрана загрузки: ресурсы стартового меню догружены
+    mtext = STARTUP.read_text()
+    if "moon_input::set_ready" not in mtext:
+        anchor = (
+            "                        self.loaded = Some(result);\n"
+            + "                        self.delivered = true;"
+        )
+        if anchor in mtext:
+            mtext = mtext.replace(
+                anchor,
+                anchor + "\n                        crate::moon_input::set_ready(true);",
+                1,
+            )
+            STARTUP.write_text(mtext)
+            print("startup_menu.rs: экран загрузки гаснет по готовности ресурсов")
+        else:
+            print("::warning::startup_menu.rs: нет якоря готовности — слой сам сдастся через 8 с")
 
     gtext = GAME.read_text()
     if "self.touch_frame(event_loop);" not in gtext:
