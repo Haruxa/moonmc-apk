@@ -8,9 +8,11 @@
 package dev.moonmc.game
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -38,6 +40,9 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -66,6 +71,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.movtery.layer_controller.ControlEditorLayer
@@ -96,7 +103,8 @@ fun ControlEditorScreen(
     var selected by remember { mutableStateOf<ObservableWidget?>(null) }
     var focus by remember { mutableStateOf<ObservableControlLayer?>(null) }
     var tab by remember { mutableIntStateOf(0) }
-    var sheet by remember { mutableStateOf(Sheet.Normal) }
+    // Панель можно свернуть в узкую полосу — тогда холст целиком свободен.
+    var collapsed by remember { mutableStateOf(false) }
     var keysFor by remember { mutableStateOf<ObservableWidget?>(null) }
     var confirmDelete by remember { mutableStateOf<ObservableWidget?>(null) }
 
@@ -117,7 +125,12 @@ fun ControlEditorScreen(
         if (selected === widget) selected = null
     }
 
-    Box(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val screen = IntSize(constraints.maxWidth, constraints.maxHeight)
+        // Панель уходит на сторону, противоположную выбранному элементу:
+        // элемент слева — панель справа, и наоборот.
+        val bounds = selected?.renderBounds(screen)
+        val panelAtStart = bounds != null && bounds.center.x > screen.width / 2f
         // Затемнение: за холстом видна игра, но кнопки читаются.
         Box(
             Modifier
@@ -132,27 +145,8 @@ fun ControlEditorScreen(
                 focus = layer
             },
             onBackgroundClick = { selected = null },
-            floatingButtons = {
-                AssistChipRow(
-                    onButton = {
-                        val made = activeLayer().addButton()
-                        selected = made
-                        tab = 0
-                    },
-                    onJoystick = {
-                        val layer = activeLayer()
-                        layer.addJoystickButton(Controls.newJoystick())
-                        selected = layer.joystickButtons.value.lastOrNull()
-                        tab = 0
-                    },
-                    onText = {
-                        val layer = activeLayer()
-                        layer.addTextBox(Controls.newText("Текст"))
-                        selected = layer.textBoxes.value.lastOrNull()
-                        tab = 0
-                    },
-                )
-            },
+            // Палитра переехала в боковую панель: холст ничем не перекрыт.
+            floatingButtons = {},
             enableSnap = true,
             snapInAllLayers = true,
             snapMode = SnapMode.Local,
@@ -160,97 +154,136 @@ fun ControlEditorScreen(
             isDark = isSystemInDarkTheme(),
         )
 
-        // Верхняя панель: выход, имя профиля, сохранение.
-        Surface(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(8.dp)
-                .fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.94f),
-        ) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onCancel) {
-                    Icon(Icons.Filled.ArrowBack, "Отменить", tint = MaterialTheme.colorScheme.onSurface)
-                }
-                Text(name, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
-                Spacer(Modifier.weight(1f))
-                Button(onClick = onSave) {
-                    Icon(Icons.Filled.Done, null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Сохранить", fontSize = 14.sp)
-                }
-            }
-        }
+        // Верхней полосы больше нет: «Назад» и «Сохранить» живут в шапке панели.
 
-        // Нижняя панель: свойства / слой / стили.
+        // Боковая панель: слева или справа от выбранного элемента, на всю высоту.
         Surface(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .fillMaxHeight(if (sheet == Sheet.Normal) 0.34f else 0.62f),
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            color = MaterialTheme.colorScheme.surfaceContainer,
+                .align(if (panelAtStart) Alignment.CenterStart else Alignment.CenterEnd)
+                .fillMaxHeight()
+                .width(if (collapsed) 56.dp else 340.dp),
+            shape = RoundedCornerShape(
+                topStart = if (panelAtStart) 0.dp else 24.dp,
+                bottomStart = if (panelAtStart) 0.dp else 24.dp,
+                topEnd = if (panelAtStart) 24.dp else 0.dp,
+                bottomEnd = if (panelAtStart) 24.dp else 0.dp,
+            ),
+            color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.97f),
             tonalElevation = 6.dp,
         ) {
-            Column(Modifier.fillMaxSize()) {
-                Row(
-                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+            if (collapsed) {
+                Column(
+                    Modifier.fillMaxSize().padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(
-                        when (tab) {
-                            0 -> "Свойства"
-                            1 -> "Слой"
-                            else -> "Стили"
-                        },
-                        color = MaterialTheme.colorScheme.primary,
-                        fontSize = 15.sp,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    IconButton(onClick = {
-                        sheet = if (sheet == Sheet.Normal) Sheet.Big else Sheet.Normal
-                    }) {
-                        Icon(
-                            if (sheet == Sheet.Normal) Icons.Filled.KeyboardArrowUp
-                            else Icons.Filled.KeyboardArrowDown,
-                            "Размер панели",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    IconButton(onClick = { collapsed = false }) {
+                        Icon(Icons.Filled.KeyboardArrowDown, "Развернуть панель")
+                    }
+                    listOf(
+                        Icons.Filled.Settings to "Свойства",
+                        Icons.Filled.List to "Слой",
+                        Icons.Filled.Star to "Стили",
+                    ).forEachIndexed { index, item ->
+                        IconButton(onClick = { tab = index }) {
+                            Icon(
+                                item.first,
+                                item.second,
+                                tint = if (tab == index) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
-                TabRow(selectedTabIndex = tab, containerColor = Color.Transparent) {
-                    listOf("Свойства", "Слой", "Стили").forEachIndexed { index, label ->
-                        Tab(
-                            selected = tab == index,
-                            onClick = { tab = index },
-                            text = { Text(label, fontSize = 12.sp) },
+            } else {
+                Column(Modifier.fillMaxSize()) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(onClick = onCancel) {
+                            Icon(
+                                Icons.Filled.ArrowBack,
+                                "Отменить",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                        Text(
+                            name,
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = onSave) {
+                            Icon(
+                                Icons.Filled.Done,
+                                "Сохранить",
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        IconButton(onClick = { collapsed = true }) {
+                            Icon(Icons.Filled.KeyboardArrowUp, "Свернуть панель")
+                        }
+                    }
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        AssistChipRow(
+                            onButton = {
+                                val made = activeLayer().addButton()
+                                selected = made
+                                tab = 0
+                            },
+                            onJoystick = {
+                                val layer = activeLayer()
+                                layer.addJoystickButton(Controls.newJoystick())
+                                selected = layer.joystickButtons.value.lastOrNull()
+                                tab = 0
+                            },
+                            onText = {
+                                val layer = activeLayer()
+                                layer.addTextBox(Controls.newText("Текст"))
+                                selected = layer.textBoxes.value.lastOrNull()
+                                tab = 0
+                            },
                         )
                     }
-                }
-                when (tab) {
-                    0 -> PropertiesTab(
-                        selected = selected,
-                        layer = focus,
-                        onPickKeys = { keysFor = it },
-                        onDelete = { confirmDelete = it },
-                        modifier = Modifier.weight(1f),
-                    )
-                    1 -> LayersTab(
-                        layout = layout,
-                        selected = focus,
-                        onFocus = { focus = it },
-                        onDeleteLayer = { layout.removeLayer(it) },
-                        modifier = Modifier.weight(1f),
-                    )
-                    else -> StylesTab(
-                        layout = layout,
-                        selected = selected,
-                        modifier = Modifier.weight(1f),
-                    )
+                    TabRow(selectedTabIndex = tab, containerColor = Color.Transparent) {
+                        listOf("Свойства", "Слой", "Стили").forEachIndexed { index, label ->
+                            Tab(
+                                selected = tab == index,
+                                onClick = { tab = index },
+                                text = { Text(label, fontSize = 12.sp) },
+                            )
+                        }
+                    }
+                    when (tab) {
+                        0 -> PropertiesTab(
+                            selected = selected,
+                            layer = focus,
+                            onPickKeys = { keysFor = it },
+                            onDelete = { confirmDelete = it },
+                            modifier = Modifier.weight(1f),
+                        )
+                        1 -> LayersTab(
+                            layout = layout,
+                            selected = focus,
+                            onFocus = { focus = it },
+                            onDeleteLayer = { layout.removeLayer(it) },
+                            modifier = Modifier.weight(1f),
+                        )
+                        else -> StylesTab(
+                            layout = layout,
+                            selected = selected,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
             }
         }
@@ -286,8 +319,6 @@ fun ControlEditorScreen(
         )
     }
 }
-
-private enum class Sheet { Normal, Big }
 
 /** Палитра добавления: новые кнопка, стик и текст. */
 @Composable

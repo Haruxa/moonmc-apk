@@ -476,15 +476,26 @@ def patch_prepared() -> None:
 pub fn prepared(home: &Path) -> bool {
     home.join(RESOURCES).join("horizon-resources.json").is_file()
 }"""
-    new = """/// The resources are prepared: Java and the resource files, without hashing them.
+    new = """/// The resources are prepared: Java and the resources, confirmed by our marker.
 pub fn prepared(home: &Path) -> bool {
-    let java = std::env::var_os("HORIZON_PRIVATE_HOME")
+    let jre = std::env::var_os("HORIZON_PRIVATE_HOME")
         .map(std::path::PathBuf::from)
         .map(|dir| dir.join("jre"))
         .unwrap_or_else(|| home.join("jre"));
+    let resources = home.join(RESOURCES);
     // MoonMC: быстрая проверка — только имена и права, без пересчёта хешей.
-    (moon_java_ready(&home.join("jre")) || moon_java_ready(&java))
-        && moon_resources_ready(&home.join(RESOURCES))
+    let java_ok = moon_java_ready(&home.join("jre")) || moon_java_ready(&jre);
+    let ready = moon_resources_ready(&resources);
+    moon_setup_log(
+        home,
+        &format!(
+            "проверка: java={java_ok} ({}) ресурсы={ready} (нет: {}) маркер={}",
+            jre.display(),
+            moon_probe(&resources).unwrap_or("ничего"),
+            moon_marker(&resources).is_file(),
+        ),
+    );
+    java_ok && ready
 }
 
 /// Исполняемый ли `bin/java`: тот же признак, что у пересборки JRE.
@@ -495,21 +506,50 @@ fn moon_java_ready(jre: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Ресурсы игры на месте: манифест и обязательные файлы (проверка имён, не содержимого).
-fn moon_resources_ready(resources: &Path) -> bool {
-    for name in [
-        "horizon-resources.json",
-        "facts.json",
-        "block-tags.json",
-        "model-states.json",
-    ] {
+/// Маркер готовности: пишется после успешной подготовки ресурсов.
+fn moon_marker(resources: &Path) -> PathBuf {
+    resources.join(".moonmc-ready")
+}
+
+/// Какого файла не хватает из тех, что загрузчик ресурсов открывает первыми.
+fn moon_probe(resources: &Path) -> Option<&'static str> {
+    for name in ["horizon-resources.json", "facts.json", "block-tags.json"] {
         if !resources.join(name).is_file() {
-            return false;
+            return Some(name);
         }
     }
-    std::fs::read_dir(resources.join("assets/minecraft"))
-        .map(|mut dir| dir.next().is_some())
-        .unwrap_or(false)
+    None
+}
+
+/// Ресурсы готовы: маркер или все файлы загрузчика (тогда маркер сразу пишем).
+fn moon_resources_ready(resources: &Path) -> bool {
+    if !resources.join("horizon-resources.json").is_file() {
+        return false;
+    }
+    if moon_marker(resources).is_file() {
+        return true;
+    }
+    if moon_probe(resources).is_some() {
+        return false;
+    }
+    let _ = std::fs::write(moon_marker(resources), "ready");
+    true
+}
+
+/// Строка диагностики подготовки: в /sdcard рядом с игрой, иначе в приватную папку.
+fn moon_setup_log(home: &Path, text: &str) {
+    let public = std::path::Path::new("/sdcard/MoonMC/horizon");
+    let _ = std::fs::create_dir_all(public);
+    let file = public.join("moonmc-setup.txt");
+    let mut body = std::fs::read_to_string(&file).unwrap_or_default();
+    if body.len() > 32_768 {
+        body.clear();
+    }
+    body.push_str(text);
+    body.push('\\n');
+    if std::fs::write(&file, body).is_err() {
+        let _ = std::fs::write(home.join("moonmc-setup.txt"), text);
+    }
 }
 
 /// Экспортёры распакованы: по файлу, который нужен самой подготовке.
@@ -586,9 +626,14 @@ def patch_setup_incremental() -> None:
     let resources = home.join(RESOURCES);
     if moon_resources_ready(&resources) {
         log("Ресурсы уже на месте — подготовка не нужна.");
+        moon_setup_log(home, "подготовка: пропуск, ресурсы готовы");
     } else {
         log("Preparing the resources from your Minecraft (a few minutes)...");
+        moon_setup_log(home, "подготовка: начата");
         horizon_prepare::prepare(&options, log)?;
+        // Готово: с этой строкой следующие запуски будут мгновенными.
+        let _ = std::fs::write(moon_marker(&resources), "ready");
+        moon_setup_log(home, "подготовка: готово, маркер записан");
     }
     // The sounds are optional: a failure leaves the game silent, not broken.
     if !resources.join("assets/minecraft/sounds.json").is_file() {
@@ -605,8 +650,10 @@ def patch_setup_incremental() -> None:
     run_old = """pub fn run(app: &AndroidApp, home: &Path, status: fn(&str), restart: fn()) {
     let shared = Arc::new(Mutex::new((String::new(), None::<bool>)));"""
     run_new = """pub fn run(app: &AndroidApp, home: &Path, status: fn(&str), restart: fn()) {
-    // MoonMC: всё уже на месте — экран подготовки не нужен, сразу в игру.
-    if moon_missing(home).is_empty() {
+    // MoonMC: вс‘ уже на месте — экран подготовки не нужен, сразу в игру.
+    let missing = moon_missing(home);
+    moon_setup_log(home, &format!("пропуск подготовки: не хватает {missing:?}"));
+    if missing.is_empty() {
         restart();
         return;
     }

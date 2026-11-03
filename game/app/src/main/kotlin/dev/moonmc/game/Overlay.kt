@@ -23,6 +23,8 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -211,47 +213,37 @@ object Overlay {
     /** Клавиатура занимает низ экрана, но слой остаётся: его Esc нужен, чтобы выйти
      * из чата. Плашек ESC/ввод над клавиатурой больше нет — кнопка в самой клавиатуре
      * отправляет сообщение и закрывает её. */
-    private var keyboardHidden = false
 
-    /** Клавиатура реально на экране. Флаг движка для этого не годится: IME убирают
-     * своей кнопкой, движок об этом не узнаёт. */
-    private fun imeVisible(activity: Activity): Boolean = runCatching {
-        val decor = activity.window.decorView
-        if (android.os.Build.VERSION.SDK_INT >= 30) {
-            decor.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true
-        } else {
-            val frame = android.graphics.Rect()
-            decor.getWindowVisibleDisplayFrame(frame)
-            decor.height - frame.bottom > decor.height / 4
-        }
-    }.getOrDefault(false)
+    /** Последняя применённая высота окна слоя: 0 — полный экран. */
+    private var lastHeight = 0
 
     /** Клавиатура поднялась: слой ужимается в область над ней — иначе его кнопки
      * лежат поверх клавиш и печатать нельзя. Esc остаётся вверху слева и нажимается. */
-    private fun applyKeyboard(up: Boolean, activity: Activity) {
-        if (up == keyboardHidden) return
-        keyboardHidden = up
+    private fun applyKeyboard(activity: Activity, full: Boolean) {
         runCatching {
             val window = dialog?.window ?: return@runCatching
             val screen = resources(activity).heightPixels
-            val ime = if (up) imeHeightPx(activity) else 0
-            // Совсем маленькое окно хуже, чем ничего: тогда оставляем как есть.
-            val narrow = ime > screen / 6
-            window.setGravity(if (narrow) android.view.Gravity.TOP else android.view.Gravity.CENTER)
-            if (narrow) {
-                window.setLayout(
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    (screen - ime).coerceAtLeast(screen / 4),
-                )
-            } else {
-                window.setLayout(
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                )
+            val ime = imeHeightPx(activity)
+            // Движок сам знает, что просил клавиатуру: это спасает, когда инсеты
+            // про IME ещё не пришли (на них и залипала прошлая версия).
+            val wanted = runCatching { Native.keyboardShown() }.getOrDefault(false)
+            val shown = !full && (ime > screen / 8 || wanted)
+            val target = when {
+                !shown -> 0
+                ime > screen / 8 -> (screen - ime).coerceAtLeast(screen / 4)
+                // Высоту ещё не знаем — ужимаемся на запасные 45%, уточним на следующем опросе.
+                else -> (screen * 0.55f).toInt()
             }
+            if (target == lastHeight) return@runCatching
+            lastHeight = target
+            window.setGravity(if (target == 0) android.view.Gravity.CENTER else android.view.Gravity.TOP)
+            window.setLayout(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                if (target == 0) WindowManager.LayoutParams.MATCH_PARENT else target,
+            )
             android.util.Log.i(
                 "MoonOverlay",
-                "клавиатура: " + (if (up) "показана, окно сжато до " + (screen - ime) else "скрыта"),
+                "клавиатура: " + if (target == 0) "скрыта, полный экран" else "окно сжато до " + target,
             )
         }
     }
@@ -445,7 +437,7 @@ object Overlay {
         // Панель открыта — клавиатура нужна для нашего поля, слой не прячем.
         LaunchedEffect(Unit) {
             while (true) {
-                applyKeyboard(imeVisible(activity) && !openedNow, activity)
+                applyKeyboard(activity, openedNow || editorOpen)
                 val menu = runCatching { Native.inMenu() }.getOrDefault(false)
                 if (menu != inMenu) inMenu = menu
                 if (!ready) {
@@ -800,7 +792,12 @@ object Overlay {
             current = Controls.current()
         }
 
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             // Текущий профиль: тап раскрывает список.
             Surface(
                 onClick = { expanded = !expanded },
@@ -894,8 +891,10 @@ object Overlay {
 
             note?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Text(
-                "Профили лежат в /sdcard/MoonMC/controls — файл из Zalith можно просто скопировать сюда",
-                fontSize = 10.sp,
+                "Профили: /sdcard/MoonMC/controls",
+                fontSize = 11.sp,
+                maxLines = 2,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
