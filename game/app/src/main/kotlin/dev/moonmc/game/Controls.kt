@@ -11,7 +11,6 @@ package dev.moonmc.game
 import android.app.Activity
 import android.net.Uri
 import com.movtery.inputmap.keycodes.ControlEventKeycode
-import com.movtery.layer_controller.EDITOR_VERSION
 import com.movtery.layer_controller.data.ButtonPosition
 import com.movtery.layer_controller.data.ButtonSize
 import com.movtery.layer_controller.data.CenterPosition
@@ -24,10 +23,10 @@ import com.movtery.layer_controller.data.NormalData
 import com.movtery.layer_controller.data.TextAlignment
 import com.movtery.layer_controller.data.TextData
 import com.movtery.layer_controller.data.VisibilityType
-import com.movtery.layer_controller.data.createTranslatable
+import com.movtery.layer_controller.data.lang.createTranslatable
 import com.movtery.layer_controller.event.ClickEvent
 import com.movtery.layer_controller.layout.ControlLayout
-import com.movtery.layer_controller.layout.EmptyLayoutInfo
+import com.movtery.layer_controller.layout.EmptyControlLayout
 import com.movtery.layer_controller.layout.createNewLayer
 import com.movtery.layer_controller.layout.loadLayoutFromString
 import com.movtery.layer_controller.layout.saveLayoutToString
@@ -170,16 +169,17 @@ object Controls {
         if (text.isBlank()) return "Файл пустой"
 
         val layout = when {
-            text.contains("\"editorVersion\"") ->
-                runCatching { loadLayoutFromString(text) }.getOrNull() ?: return "Раскладка Zalith повреждена"
-            text.contains("mControlDataList") ->
-                runCatching { fromPojav(text) }.getOrNull() ?: return "Профиль Pojav повреждён"
+            text.contains("\"editorVersion\"") -> runCatching {
+                ObservableControlLayout(loadLayoutFromString(text))
+            }.getOrNull() ?: return "Раскладка Zalith повреждена"
+            text.contains("mControlDataList") -> runCatching { fromPojav(text) }.getOrNull()
+                ?: return "Профиль Pojav повреждён"
             else -> return "Неизвестный формат"
         }
         val clean = safeName(name)
         val target = if (clean == BUILTIN) BUILTIN + " import" else clean
         return runCatching {
-            file(target).writeText(saveLayoutToString(layout))
+            file(target).writeText(saveLayoutToString(layout.pack()))
             setCurrent(target)
             null
         }.getOrElse { "Не записалось: " + it.message }
@@ -275,11 +275,13 @@ object Controls {
     }
 
     /** Весь controlmap Pojav → одна раскладка с кнопками и стиком. */
-    private fun fromPojav(text: String): ControlLayout {
+    private fun fromPojav(text: String): ObservableControlLayout {
         val root = JSONObject(text)
         val list = root.optJSONArray("mControlDataList")
             ?: throw IllegalArgumentException("mControlDataList")
-        val layer = createNewLayer("Pojav")
+        // Пустая раскладка библиотеки: дальше её наполняем тем же API, что редактор.
+        val layout = ObservableControlLayout(EmptyControlLayout)
+        val layer = layout.addLayer(createNewLayer("Pojav"))
         var joystick: JoystickData? = null
         val skipped = ArrayList<String>(4)
         for (i in 0 until list.length()) {
@@ -313,13 +315,7 @@ object Controls {
         }
         joystick?.let { layer.addJoystickButton(it) }
         Overlay.importNotes = skipped
-        return ControlLayout(
-            info = EmptyLayoutInfo,
-            layers = listOf(layer.pack()),
-            styles = emptyList(),
-            joystickStyles = emptyList(),
-            editorVersion = EDITOR_VERSION,
-        )
+        return layout
     }
 
     /** Случайный uuid виджета в формате библиотеки. */

@@ -72,7 +72,6 @@ import com.movtery.layer_controller.ControlEditorLayer
 import com.movtery.layer_controller.data.ButtonPosition
 import com.movtery.layer_controller.data.ButtonSize
 import com.movtery.layer_controller.data.VisibilityType
-import com.movtery.layer_controller.data.createTranslatable
 import com.movtery.layer_controller.event.ClickEvent
 import com.movtery.layer_controller.layout.createNewLayer
 import com.movtery.layer_controller.observable.ObservableButtonStyle
@@ -101,7 +100,7 @@ fun ControlEditorScreen(
     var keysFor by remember { mutableStateOf<ObservableWidget?>(null) }
     var confirmDelete by remember { mutableStateOf<ObservableWidget?>(null) }
 
-    fun activeLayer(): ObservableControlLayer? =
+    fun activeLayer(): ObservableControlLayer =
         focus ?: layers.firstOrNull() ?: layout.addLayer(createNewLayer("Слой 1"))
 
     fun remove(widget: ObservableWidget) {
