@@ -83,17 +83,6 @@ object Native {
         runCatching { enterNative() }
     }
 
-    /** Размер окна игры в пикселях: 0 — ещё не известен. */
-    fun viewportWidth(): Int {
-        ensure()
-        return runCatching { viewportWidthNative() }.getOrDefault(0)
-    }
-
-    fun viewportHeight(): Int {
-        ensure()
-        return runCatching { viewportHeightNative() }.getOrDefault(0)
-    }
-
     private external fun keyDown(code: Int, pressed: Boolean)
     private external fun mouseDown(button: Int, pressed: Boolean)
     private external fun stickMove(x: Float, y: Float)
@@ -104,8 +93,6 @@ object Native {
     private external fun accountNameNative(): String
     private external fun setAccountNative(name: String)
     private external fun inMenuNative(): Boolean
-    private external fun viewportWidthNative(): Int
-    private external fun viewportHeightNative(): Int
     private external fun readyNative(): Boolean
     private external fun enterNative()
 }

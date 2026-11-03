@@ -224,26 +224,6 @@ pub extern "system" fn Java_dev_moonmc_game_Native_inMenuNative(
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 /// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
-pub extern "system" fn Java_dev_moonmc_game_Native_viewportWidth(
-    _env: jni::JNIEnv,
-    _class: jni::objects::JClass,
-) -> jni::sys::jint {
-    crate::moon_input::viewport_width()
-}
-
-#[allow(unsafe_code)]
-#[unsafe(no_mangle)]
-/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
-pub extern "system" fn Java_dev_moonmc_game_Native_viewportHeight(
-    _env: jni::JNIEnv,
-    _class: jni::objects::JClass,
-) -> jni::sys::jint {
-    crate::moon_input::viewport_height()
-}
-
-#[allow(unsafe_code)]
-#[unsafe(no_mangle)]
-/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 pub extern "system" fn Java_dev_moonmc_game_Native_readyNative(
     _env: jni::JNIEnv,
     _class: jni::objects::JClass,
@@ -332,47 +312,55 @@ pub extern "system" fn Java_dev_moonmc_game_Native_enterNative(
                         }
                     }
                 }
-                // Мир: палец крутит камеру, его короткий тап — удар/использовать.
-                // Меню: прежний путь — курсор, клик, колесо (листание списков).
-                Event::Touch(x, y, action, id) => {
-                    // Меню — по состояниию самого движка (титул/экраны/диалоги),
-                    // а не по захвату курсора: фокус окна на Android не гарантирован.
-                    if !self.touch_in_menu() {
-                        let scale = self.gui_scale().map_or(1.0, |batch| batch.scale);
-                        match crate::moon_input::finger_step(x, y, action, id) {
-                            crate::moon_input::Step::Look(dx, dy) => {
-                                // Флаг для apply_mouse_look: поворот от моста применяется
-                                // даже без захвата курсора.
-                                self.touch.active = true;
-                                self.touch_turn(dx / scale, dy / scale, LOOK);
-                            }
-                            // Тап — удар: как левая кнопка мыши, нажали и отпустили.
-                            crate::moon_input::Step::Tap => {
-                                let mouse = winit::event::MouseButton::Left;
-                                for pressed in [true, false] {
-                                    if let Err(e) = self.play_mouse(mouse, pressed) {
-                                        log::warn!("MoonMC: {mouse:?}: {e}");
+        // Мир: палец крутит камеру, его короткий тап — удар/использовать.
+        // Меню: прежний путь — курсор, клик, колесо (листание списков).
+        // Координаты приходят долями окна (0..1): переводим их в GUI-геометрию
+        // движка — в ней он и рисует меню, и ищет попадания. Так расхождение
+        // окон, вырез и масштаб поверхности не сдвигают нажатие.
+        Event::Touch(nx, ny, action, id) => {
+                    if let Some(batch) = self.gui_scale() {
+                        let at = (nx * batch.width as f32, ny * batch.height as f32);
+                        // Меню — по состояниию самого движка (титул/экраны/диалоги),
+                        // а не по захвату курсора: фокус окна на Android не гарантирован.
+                        if !self.touch_in_menu() {
+                            match crate::moon_input::finger_step(at.0, at.1, action, id) {
+                                crate::moon_input::Step::Look(dx, dy) => {
+                                    // Флаг для apply_mouse_look: поворот от моста применяется
+                                    // даже без захвата курсора.
+                                    self.touch.active = true;
+                                    self.touch_turn(dx, dy, LOOK);
+                                }
+                                // Тап — удар: как левая кнопка мыши, нажали и отпустили.
+                                crate::moon_input::Step::Tap => {
+                                    let mouse = winit::event::MouseButton::Left;
+                                    for pressed in [true, false] {
+                                        if let Err(e) = self.play_mouse(mouse, pressed) {
+                                            log::warn!("MoonMC: {mouse:?}: {e}");
+                                        }
                                     }
                                 }
+                                crate::moon_input::Step::None => {}
                             }
-                            crate::moon_input::Step::None => {}
+                        } else if let Some(window) = self.window.as_ref().map(|w| w.id()) {
+                            let phase = match action {
+                                // MotionEvent: DOWN=0, UP=1, MOVE=2, CANCEL=3, POINTER_DOWN=5, POINTER_UP=6.
+                                0 | 5 => winit::event::TouchPhase::Started,
+                                2 => winit::event::TouchPhase::Moved,
+                                1 | 6 => winit::event::TouchPhase::Ended,
+                                _ => winit::event::TouchPhase::Cancelled,
+                            };
+                            let touch = winit::event::Touch {
+                                device_id: winit::event::DeviceId::dummy(),
+                                phase,
+                                location: winit::dpi::PhysicalPosition::new(
+                                    f64::from(at.0 * batch.scale),
+                                    f64::from(at.1 * batch.scale),
+                                ),
+                                force: None,
+                                id: id as u64,
+                            };
+                            self.touch_event(event_loop, window, touch);
                         }
-                    } else if let Some(window) = self.window.as_ref().map(|w| w.id()) {
-                        let phase = match action {
-                            // MotionEvent: DOWN=0, UP=1, MOVE=2, CANCEL=3, POINTER_DOWN=5, POINTER_UP=6.
-                            0 | 5 => winit::event::TouchPhase::Started,
-                            2 => winit::event::TouchPhase::Moved,
-                            1 | 6 => winit::event::TouchPhase::Ended,
-                            _ => winit::event::TouchPhase::Cancelled,
-                        };
-                        let touch = winit::event::Touch {
-                            device_id: winit::event::DeviceId::dummy(),
-                            phase,
-                            location: winit::dpi::PhysicalPosition::new(x as f64, y as f64),
-                            force: None,
-                            id: id as u64,
-                        };
-                        self.touch_event(event_loop, window, touch);
                     }
                 }
                 // Кнопка IME слоя: системная клавиатура Android (ввод в чат).
@@ -400,11 +388,7 @@ pub extern "system" fn Java_dev_moonmc_game_Native_enterNative(
         }
         crate::moon_input::set_keyboard_up(self.touch.keyboard);
         crate::moon_input::set_account(&self.options.player_name());
-        crate::moon_input::set_in_menu(self.touch_in_menu());
-        // MoonMC: размер окна игры — слой пересчитывает по нему координаты тапов.
-        if let Some(size) = self.window.as_ref().map(|w| w.inner_size()) {
-            crate::moon_input::set_viewport(size.width, size.height);
-        }"""
+        crate::moon_input::set_in_menu(self.touch_in_menu());"""
             text = text.replace(anchor, body, 1)
             TOUCH.write_text(text)
             print("touch.rs: очередь моста разбирается в кадре")

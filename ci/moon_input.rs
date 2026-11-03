@@ -87,22 +87,6 @@ pub(super) fn in_menu() -> bool {
     IN_MENU.get_or_init(|| AtomicBool::new(false)).load(Ordering::Relaxed)
 }
 
-/// Размер окна игры в пикселях: `(width << 32) | height`. Ноль — ещё не знаем.
-static VIEWPORT: AtomicU64 = AtomicU64::new(0);
-
-/// Движок сообщает размер своего окна: по нему слой пересчитывает координаты тапов.
-pub(super) fn set_viewport(width: u32, height: u32) {
-    VIEWPORT.store(((width as u64) << 32) | u64::from(height), Ordering::Relaxed);
-}
-
-pub(super) fn viewport_width() -> i32 {
-    (VIEWPORT.load(Ordering::Relaxed) >> 32) as i32
-}
-
-pub(super) fn viewport_height() -> i32 {
-    (VIEWPORT.load(Ordering::Relaxed) & 0xffff_ffff) as i32
-}
-
 /// Движок загрузил ресурсы и меню живое: до этого слой показывает экран загрузки.
 static READY: OnceLock<AtomicBool> = OnceLock::new();
 

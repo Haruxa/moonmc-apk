@@ -220,13 +220,6 @@ object Overlay {
     /** Инсеты про IME хоть раз приходили: тогда флагу движка больше не верим. */
     private var imeSeen = false
 
-    /** Размер окна игры: нужен, чтобы координаты тапов совпадали с её вьюпортом. */
-    @Volatile
-    private var gameW = 0
-
-    @Volatile
-    private var gameH = 0
-
     /** Клавиатура поднялась (и это не наш ввод) — слой не рисуется вообще.
      * Закрылась — слой возвращается на весь экран. */
     private fun applyKeyboard(activity: Activity, ownInput: Boolean) {
@@ -412,24 +405,19 @@ object Overlay {
         action: Int = event.actionMasked,
         index: Int = event.actionIndex,
     ) {
-        var x = event.getX(index)
-        var y = event.getY(index)
-        // Координаты нашего окна → координаты вьюпорта игры: они расходятся из-за
-        // выреза, системных панелей и масштаба поверхности (тапы уезжали на 1–2 слота).
-        val ourW = screenPx
-        val ourH = screenPy
-        if (gameW > 0 && gameH > 0 && ourW > 0f && ourH > 0f &&
-            (kotlin.math.abs(gameW - ourW) > 1f || kotlin.math.abs(gameH - ourH) > 1f)
-        ) {
-            x = x * gameW / ourW
-            y = y * gameH / ourH
-        }
-        Native.touch(x, y, action, event.getPointerId(index))
+        val x = event.getX(index)
+        val y = event.getY(index)
+        val ourW = screenPx.coerceAtLeast(1f)
+        val ourH = screenPy.coerceAtLeast(1f)
+        // Отправляем доли окна (0..1): движок сам переводит их в свою GUI-геометрию,
+        // поэтому вырез, панели и масштаб поверхности больше не сдвигают нажатия.
+        Native.touch(x / ourW, y / ourH, action, event.getPointerId(index))
         if (action == android.view.MotionEvent.ACTION_DOWN) {
             touchReport(
                 x.roundToInt().toString() + "," + y.roundToInt() +
-                    " | наше " + ourW.roundToInt() + "x" + ourH.roundToInt() +
-                    " | игра " + gameW + "x" + gameH,
+                    " | окно " + ourW.roundToInt() + "x" + ourH.roundToInt() +
+                    " | доли " + String.format("%.4f", x / ourW) +
+                    "," + String.format("%.4f", y / ourH),
             )
         }
     }
@@ -476,9 +464,6 @@ object Overlay {
         LaunchedEffect(Unit) {
             while (true) {
                 applyKeyboard(activity, openedNow || editorOpen)
-                // Размер окна игры: по нему пересчитываем координаты тапов.
-                gameW = runCatching { Native.viewportWidth() }.getOrDefault(0)
-                gameH = runCatching { Native.viewportHeight() }.getOrDefault(0)
                 val menu = runCatching { Native.inMenu() }.getOrDefault(false)
                 if (menu != inMenu) inMenu = menu
                 if (!ready) {
