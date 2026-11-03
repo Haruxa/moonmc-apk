@@ -150,3 +150,10 @@ fun loadLayoutFromFileUncheck(file: File): ControlLayout {
     val jsonString = file.readText()
     return layoutJson.decodeFromString<ControlLayout>(jsonString)
 }
+
+/**
+ * MoonMC: сохранить раскладку в JSON — тем же форматом, что читает [loadLayoutFromString].
+ */
+fun saveLayoutToString(layout: ControlLayout): String {
+    return layoutJson.encodeToString(ControlLayout.serializer(), layout)
+}

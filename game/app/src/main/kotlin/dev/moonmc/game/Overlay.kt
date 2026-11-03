@@ -19,6 +19,8 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
@@ -28,7 +30,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
@@ -126,6 +130,11 @@ object Overlay {
         }
     }
 
+    /** Отчёт по профилям управления — рядом с остальными отчётами. */
+    internal fun reportControls(activity: Activity, text: String) {
+        report(activity, "moonmc-controls.txt", text)
+    }
+
     private fun show(activity: Activity) {
         if (dialog?.isShowing == true) return
         // Выключатель слоя: если файл есть, играем без него (крайняя мера при крашах).
@@ -194,27 +203,12 @@ object Overlay {
         imeShown = show
     }
 
-    /** Клавиатура занимает низ экрана: слой на это время не рисуется и не ловит касания
-     * (иначе его кнопки лежат поверх IME). Вместо него — панель ESC/ввод над клавиатурой. */
-    private var keyboardHidden = false
-
-    private fun applyKeyboard(up: Boolean, activity: Activity) {
-        if (up == keyboardHidden) return
-        keyboardHidden = up
-        host?.passthrough = up
-        content?.visibility = if (up) android.view.View.GONE else android.view.View.VISIBLE
-        dialog?.window?.let { window ->
-            if (up) {
-                window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
-            } else {
-                window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
-            }
-        }
-        if (up) showKeys(activity) else hideKeys()
-    }
+    /** Клавиатура занимает низ экрана, но слой остаётся: его Esc нужен, чтобы выйти
+     * из чата. Плашек ESC/ввод над клавиатурой больше нет — кнопка в самой клавиатуре
+     * отправляет сообщение и закрывает её. */
 
     /** Клавиатура реально на экране. Флаг движка для этого не годится: IME убирают
-     * своей кнопкой, движок об этом не узнаёт и слой остался бы спрятанным навсегда. */
+     * своей кнопкой, движок об этом не узнаёт. */
     private fun imeVisible(activity: Activity): Boolean = runCatching {
         val decor = activity.window.decorView
         if (android.os.Build.VERSION.SDK_INT >= 30) {
@@ -226,66 +220,13 @@ object Overlay {
         }
     }.getOrDefault(false)
 
-    /** Кнопки над клавиатурой: выйти из чата (ESC) и отправить набранное (ввод).
-     * Отдельное маленькое окно — оно не накрывает клавиши IME, в отличие от слоя. */
-    private var keysDialog: Dialog? = null
-
-    private fun showKeys(activity: Activity) {
-        if (keysDialog != null) return
+    /** Клавиатура поднялась: слой остаётся на месте и нажимается (Esc из него). */
+    private fun applyKeyboard(up: Boolean, activity: Activity) {
+        if (up == keyboardHidden) return
+        keyboardHidden = up
         runCatching {
-            val density = activity.resources.displayMetrics.density
-            val width = (56 * density).toInt()
-            val height = (40 * density).toInt()
-            val gap = (10 * density).toInt()
-            fun pill(label: String, tap: () -> Unit) = android.widget.TextView(activity).apply {
-                text = label
-                textSize = 15f
-                gravity = android.view.Gravity.CENTER
-                setTextColor(android.graphics.Color.WHITE)
-                background = android.graphics.drawable.GradientDrawable().apply {
-                    cornerRadius = height / 2f
-                    setColor(0xE6202C26.toInt())
-                    setStroke((density * 1.5f).toInt().coerceAtLeast(1), 0x66E8F1EC)
-                }
-                setOnClickListener { tap() }
-            }
-            val row = android.widget.LinearLayout(activity).apply {
-                orientation = android.widget.LinearLayout.HORIZONTAL
-                addView(
-                    pill("ESC") {
-                        Native.key(256, true)
-                        Native.key(256, false)
-                    },
-                    android.widget.LinearLayout.LayoutParams(width, height)
-                        .apply { rightMargin = gap },
-                )
-                addView(
-                    pill("⏎") { Native.enter() },
-                    android.widget.LinearLayout.LayoutParams(width, height),
-                )
-            }
-            val d = Dialog(activity)
-            d.setContentView(row)
-            d.window?.apply {
-                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-                setLayout(
-                    WindowManager.LayoutParams.WRAP_CONTENT,
-                    WindowManager.LayoutParams.WRAP_CONTENT,
-                )
-                setGravity(android.view.Gravity.TOP or android.view.Gravity.START)
-                addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
-                attributes = attributes.apply { x = gap; y = gap }
-            }
-            d.setCanceledOnTouchOutside(false)
-            d.show()
-            keysDialog = d
+            android.util.Log.i("MoonOverlay", "клавиатура: " + (if (up) "показана" else "скрыта"))
         }
-    }
-
-    private fun hideKeys() {
-        val d = keysDialog ?: return
-        keysDialog = null
-        runCatching { d.dismiss() }
     }
 
     /** Панель открыта: окно получает фокус (иначе поле ника не набрать), закрыта — обратно. */
@@ -333,6 +274,21 @@ object Overlay {
     @Volatile
     internal var widgetBounds: List<androidx.compose.ui.geometry.Rect> = emptyList()
 
+    /** Открыт редактор раскладки: игра не получает касаний, шестерня и панель скрыты. */
+    @Volatile
+    internal var editorOpen = false
+
+    /** Номер правки профиля: смена профиля заставляет слой перечитать файл. */
+    internal val layoutRevision = androidx.compose.runtime.mutableIntStateOf(0)
+
+    internal fun reloadLayout() {
+        layoutRevision.intValue = layoutRevision.intValue + 1
+    }
+
+    /** Что не удалось перенести из чужого профиля — пишется в отчёт импорта. */
+    @Volatile
+    internal var importNotes: List<String> = emptyList()
+
     /** Последние записанные в отчёт рамки: файл перезаписываем только на смене. */
     private var boundsText = ""
 
@@ -340,7 +296,10 @@ object Overlay {
     internal val widgetPointers = mutableSetOf<Int>()
 
     /** Палец лёг на наш интерфейс: такое касание игре не пересылаем. */
-    internal fun hitUi(x: Float, y: Float): Boolean {for (rect in widgetBounds) {
+    internal fun hitUi(x: Float, y: Float): Boolean {
+        // Редактор раскладки забирает все касания: под ним идёт игра.
+        if (editorOpen) return true
+        for (rect in widgetBounds) {
             if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
                 return true
             }
@@ -413,37 +372,23 @@ object Overlay {
 
     /** Раскладка: своя из папки игры, иначе встроенная из assets. */
     private fun readLayout(activity: Activity): ObservableControlLayout? {
-        val text = runCatching {
-            val own = gameDir(LAYOUT_DIR).let { dir ->
-                dir.listFiles { f -> f.name.endsWith(".json") }?.sortedBy { it.name }?.firstOrNull()
-            }
-            own?.readText() ?: activity.assets.open("default_layout.json")
-                .bufferedReader().use { it.readText() }
-        }.getOrNull() ?: return null
-        val layout = runCatching { loadLayoutFromString(text) }
-            .recoverCatching {
-                // битая своя раскладка — берём встроенную
-                loadLayoutFromString(
-                    activity.assets.open("default_layout.json")
-                        .bufferedReader().use { it.readText() },
-                )
-            }
-            .getOrElse { error ->
-                // слой не должен валить игру: пишем причину и работаем без него
-                report(activity, "moonmc-overlay.txt", "layout: " + error.stackTraceToString())
-                return null
-            }
-        return ObservableControlLayout(layout)
+        // Профиль выбирается в панели: «default» — встроенная раскладка из assets.
+        return Controls.load(activity, Controls.current())
     }
 
     @Composable
     private fun Layer(activity: Activity) {
-        val layout = remember { readLayout(activity) }
+        // Смена профиля в панели пересобирает слой с новым файлом.
+        val revision = layoutRevision.intValue
+        val layout = remember(revision) { readLayout(activity) }
         val density = LocalDensity.current
         var opened by remember { mutableStateOf(false) }
         var tab by remember { mutableIntStateOf(0) }
         var inMenu by remember { mutableStateOf(false) }
         var gear by remember { mutableStateOf(readGear(activity)) }
+        // Профиль в редакторе: своя копия раскладки, «Отмена» её выбрасывает.
+        var editing by remember { mutableStateOf<ObservableControlLayout?>(null) }
+        var editingName by remember { mutableStateOf("") }
         val gearSize = with(density) { 48.dp.toPx() }
         val panelW = with(density) { 380.dp.toPx() }
         val panelH = with(density) { 440.dp.toPx() }
@@ -470,7 +415,7 @@ object Overlay {
                 kotlinx.coroutines.delay(250)
             }
         }
-        LaunchedEffect(opened) { panelFocus(opened) }
+        LaunchedEffect(opened, editing) { panelFocus(opened || editing != null) }
 
         val handler = remember {
             EventHandler { event: ClickEvent, pressed: Boolean ->
@@ -535,6 +480,7 @@ object Overlay {
                 panelPy = panelH
                 panelEndGap = endGap
                 widgetBounds = shown
+                editorOpen = editing != null
                 // Факты для разбора жалоб на касания: пишем один раз на смену рамок.
                 val text = shown.joinToString("\n") {
                     "${it.left.roundToInt()},${it.top.roundToInt()}," +
@@ -550,6 +496,20 @@ object Overlay {
                     gear = Offset(screenW - gearSize - 24f, screenH * 0.32f)
                 }
             }
+            val editor = editing
+            if (editor != null) {
+                // Редактор: своя копия профиля, сохранение — в файл и перечитать слой.
+                ControlEditorScreen(
+                    layout = editor,
+                    name = editingName,
+                    onCancel = { editing = null },
+                    onSave = {
+                        Controls.save(activity, editingName, editor)
+                        editing = null
+                        reloadLayout()
+                    },
+                )
+            } else {
             ControlBoxLayout(
                 observedLayout = layout,
                 eventHandler = handler,
@@ -563,7 +523,10 @@ object Overlay {
             ) {
                 // мир под контролами: их слой рисует только кнопки и джойстик
             }
+            }
 
+            // Шестерня и панель при открытом редакторе уступают ему весь экран.
+            if (editor == null) {
             // Шестерня: круг, который можно тащить в любое место экрана
             Box(
                 Modifier
@@ -621,7 +584,17 @@ object Overlay {
                     tab = tab,
                     onTab = { tab = it },
                     onClose = { opened = false },
+                    onOpenEditor = { name ->
+                        val copy = Controls.load(activity, name)
+                        if (copy == null) {
+                            reportControls(activity, "профиль «" + name + "» не открылся")
+                        } else {
+                            editingName = name
+                            editing = copy
+                        }
+                    },
                 )
+            }
             }
         }
     }
@@ -708,6 +681,7 @@ object Overlay {
         tab: Int,
         onTab: (Int) -> Unit,
         onClose: () -> Unit,
+        onOpenEditor: (String) -> Unit,
         modifier: Modifier = Modifier,
     ) {
         Surface(
@@ -729,11 +703,16 @@ object Overlay {
                 ) {
                     TabIcon(Icons.Filled.Settings, "Графика", tab == 0) { onTab(0) }
                     TabIcon(Icons.Filled.Person, "Профили", tab == 1) { onTab(1) }
+                    TabIcon(Icons.Filled.Build, "Управление", tab == 2) { onTab(2) }
                 }
                 Column(Modifier.weight(1f).fillMaxHeight().padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            if (tab == 0) "Графика" else "Профили",
+                            when (tab) {
+                                0 -> "Графика"
+                                1 -> "Профили"
+                                else -> "Управление"
+                            },
                             color = MaterialTheme.colorScheme.primary,
                             fontSize = 18.sp,
                         )
@@ -742,9 +721,187 @@ object Overlay {
                             Icon(Icons.Filled.Close, "Закрыть", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
-                    if (tab == 0) GraphicsTab(activity) else ProfilesTab()
+                    when (tab) {
+                        0 -> GraphicsTab(activity)
+                        1 -> ProfilesTab()
+                        else -> ControlsTab(activity, onOpenEditor)
+                    }
                 }
             }
+        }
+    }
+
+    /** Профили управления: выбор, создание и вход в редактор. */
+    @Composable
+    private fun ControlsTab(activity: Activity, onOpenEditor: (String) -> Unit) {
+        var names by remember { mutableStateOf(Controls.names()) }
+        var current by remember { mutableStateOf(Controls.current()) }
+        var expanded by remember { mutableStateOf(false) }
+        var input by remember { mutableStateOf("") }
+        var note by remember { mutableStateOf<String?>(null) }
+        var renaming by remember { mutableStateOf<String?>(null) }
+        var pendingDelete by remember { mutableStateOf<String?>(null) }
+
+        fun refresh() {
+            names = Controls.names()
+            current = Controls.current()
+        }
+
+        val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) {
+                val target = Controls.safeName(
+                    (Controls.names().size + 1).toString() + " import"
+                )
+                val error = Controls.import(activity, uri, target)
+                note = error ?: "Импортировано: $target"
+                // что не удалось перенести из Pojav — сразу в отчёт
+                if (importNotes.isNotEmpty()) {
+                    reportControls(activity, "импорт: " + importNotes.joinToString(", "))
+                }
+                refresh()
+                reloadLayout()
+            }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // Текущий профиль: тап раскрывает список.
+            Surface(
+                onClick = { expanded = !expanded },
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Текущий профиль",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(current, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
+                    }
+                    Icon(Icons.Filled.KeyboardArrowDown, "Список профилей")
+                }
+            }
+
+            if (expanded) {
+                LazyColumn(Modifier.height(168.dp)) {
+                    items(names, key = { it }) { name ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextButton(onClick = {
+                                Controls.setCurrent(name)
+                                current = name
+                                expanded = false
+                                reloadLayout()
+                            }) {
+                                Text(
+                                    name,
+                                    fontSize = 14.sp,
+                                    color = if (name == current) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                                )
+                            }
+                            Spacer(Modifier.weight(1f))
+                            if (name != Controls.BUILTIN) {
+                                TextButton(onClick = { renaming = name }) { Text("Имя", fontSize = 11.sp) }
+                                TextButton(onClick = { pendingDelete = name }) {
+                                    Text("Удалить", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Button(
+                onClick = { onOpenEditor(current) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Открыть редактор") }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it.take(40) },
+                    singleLine = true,
+                    label = { Text("Введите название профиля", fontSize = 11.sp) },
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = {
+                    val name = Controls.safeName(input)
+                    if (!Controls.create(activity, name)) {
+                        note = "Имя занято или пустое"
+                    } else {
+                        input = ""
+                        note = "Создан профиль: $name"
+                        refresh()
+                        reloadLayout()
+                    }
+                }) {
+                    Icon(Icons.Filled.Add, "Создать профиль", tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+
+            OutlinedButton(
+                onClick = { pick.launch(arrayOf("application/json", "text/plain", "*/*")) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Импорт (Zalith / Pojav)") }
+
+            note?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            Text(
+                "Профили лежат в /sdcard/MoonMC/controls — файл из Zalith можно просто скопировать сюда",
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        renaming?.let { name ->
+            var value by remember(name) { mutableStateOf(name) }
+            AlertDialog(
+                onDismissRequest = { renaming = null },
+                title = { Text("Новое имя профиля") },
+                text = {
+                    OutlinedTextField(
+                        value = value,
+                        onValueChange = { value = it.take(40) },
+                        singleLine = true,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (!Controls.rename(name, value)) {
+                            note = "Имя занято или пустое"
+                        }
+                        renaming = null
+                        refresh()
+                    }) { Text("Переименовать") }
+                },
+                dismissButton = { TextButton(onClick = { renaming = null }) { Text("Отмена") } },
+            )
+        }
+
+        pendingDelete?.let { name ->
+            AlertDialog(
+                onDismissRequest = { pendingDelete = null },
+                title = { Text("Удалить профиль «$name»?") },
+                text = { Text("Файл профиля пропадёт безвозвратно.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (!Controls.delete(name)) note = "Текущий профиль удалить нельзя"
+                        pendingDelete = null
+                        refresh()
+                    }) { Text("Удалить") }
+                },
+                dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Отмена") } },
+            )
         }
     }
 

@@ -110,20 +110,42 @@ NEW_CONNECTION = '''            if (connection == null) {
             }
             return connection;'''
 
-# MoonMC: «готово/отправить» и Enter сначала отдают игре набранное, потом жмут Enter.
+# MoonMC: «готово/отправить» и Enter сначала отдают игре набранное, потом жмут Enter
+# и закрывают клавиатуру: сообщение ушло — ввод больше не нужен.
 OLD_SUBMIT = '''                if (code == KeyEvent.KEYCODE_ENTER) {
                     nativeKey(KeyEvent.KEYCODE_ENTER);'''
 
 NEW_SUBMIT = '''                if (code == KeyEvent.KEYCODE_ENTER) {
                     sync();
-                    nativeKey(KeyEvent.KEYCODE_ENTER);'''
+                    nativeKey(KeyEvent.KEYCODE_ENTER);
+                    hideKeyboard();'''
 
 OLD_ACTION = '''        public boolean performEditorAction(int action) {
             nativeKey(KeyEvent.KEYCODE_ENTER);'''
 
 NEW_ACTION = '''        public boolean performEditorAction(int action) {
             sync();
-            nativeKey(KeyEvent.KEYCODE_ENTER);'''
+            nativeKey(KeyEvent.KEYCODE_ENTER);
+            hideKeyboard();'''
+
+# Кнопка в самой клавиатуре — «отправить», а не безликая «готово».
+OLD_OPTIONS = '''            info.imeOptions = EditorInfo.IME_ACTION_DONE;'''
+
+NEW_OPTIONS = '''            info.imeOptions = EditorInfo.IME_ACTION_SEND;'''
+
+# Метод закрытия клавиатуры: вставляет перед report() в Connection.
+OLD_REPORT = '''        private void report() {'''
+
+NEW_REPORT = '''        /** MoonMC: «отправить» закрывает клавиатуру — сообщение уже ушло в игру. */
+        private void hideKeyboard() {
+            InputMethodManager imm = (InputMethodManager) view.getContext()
+                .getSystemService(Context.INPUT_METHOD_SERVICE);
+            imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
+            view.clearFocus();
+            OverlayBridge.gameKeyboard(false);
+        }
+
+        private void report() {'''
 
 OVERLAY = '''        // MoonMC: любая необработанная ошибка пишется рядом с игрой — иначе краш
         // на старте нечем диагностировать (лог Rust в этот момент ещё пуст).
@@ -330,6 +352,8 @@ def main() -> int:
             (OLD_RESTART, NEW_RESTART, "restart"),
             (OLD_KEYBOARD, NEW_KEYBOARD, "setKeyboard"),
             (OLD_CONNECTION, NEW_CONNECTION, "onCreateInputConnection"),
+            (OLD_OPTIONS, NEW_OPTIONS, "imeOptions"),
+            (OLD_REPORT, NEW_REPORT, "hideKeyboard"),
             (OLD_SUBMIT, NEW_SUBMIT, "sendKeyEvent(ENTER)"),
             (OLD_ACTION, NEW_ACTION, "performEditorAction"),
         ):
