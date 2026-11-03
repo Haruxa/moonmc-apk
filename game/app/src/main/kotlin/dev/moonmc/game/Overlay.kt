@@ -214,36 +214,51 @@ object Overlay {
      * из чата. Плашек ESC/ввод над клавиатурой больше нет — кнопка в самой клавиатуре
      * отправляет сообщение и закрывает её. */
 
-    /** Последняя применённая высота окна слоя: 0 — полный экран. */
-    private var lastHeight = 0
+    /** Клавиатура на экране: слой полностью прячется, чтобы не мешать вводу. */
+    private var lastHidden = false
 
-    /** Клавиатура поднялась: слой ужимается в область над ней — иначе его кнопки
-     * лежат поверх клавиш и печатать нельзя. Esc остаётся вверху слева и нажимается. */
-    private fun applyKeyboard(activity: Activity, full: Boolean) {
+    /** Инсеты про IME хоть раз приходили: тогда флагу движка больше не верим. */
+    private var imeSeen = false
+
+    /** Размер окна игры: нужен, чтобы координаты тапов совпадали с её вьюпортом. */
+    @Volatile
+    private var gameW = 0
+
+    @Volatile
+    private var gameH = 0
+
+    /** Клавиатура поднялась (и это не наш ввод) — слой не рисуется вообще.
+     * Закрылась — слой возвращается на весь экран. */
+    private fun applyKeyboard(activity: Activity, ownInput: Boolean) {
         runCatching {
             val window = dialog?.window ?: return@runCatching
+            val content = content ?: return@runCatching
             val screen = resources(activity).heightPixels
             val ime = imeHeightPx(activity)
-            // Движок сам знает, что просил клавиатуру: это спасает, когда инсеты
-            // про IME ещё не пришли (на них и залипала прошлая версия).
+            if (ime > screen / 8) imeSeen = true
+            // Флаг движка — только пока инсеты ни разу не приходили: иначе он
+            // навсегда оставлял слой спрятанным после закрытия клавиатуры.
             val wanted = runCatching { Native.keyboardShown() }.getOrDefault(false)
-            val shown = !full && (ime > screen / 8 || wanted)
-            val target = when {
-                !shown -> 0
-                ime > screen / 8 -> (screen - ime).coerceAtLeast(screen / 4)
-                // Высоту ещё не знаем — ужимаемся на запасные 45%, уточним на следующем опросе.
-                else -> (screen * 0.55f).toInt()
+            val hidden = !ownInput && (ime > screen / 8 || (!imeSeen && wanted))
+            if (hidden == lastHidden) return@runCatching
+            lastHidden = hidden
+            if (hidden) {
+                content.visibility = android.view.View.GONE
+                host?.passthrough = true
+                window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+                window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, 1)
+            } else {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+                window.setLayout(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                )
+                content.visibility = android.view.View.VISIBLE
+                host?.passthrough = false
             }
-            if (target == lastHeight) return@runCatching
-            lastHeight = target
-            window.setGravity(if (target == 0) android.view.Gravity.CENTER else android.view.Gravity.TOP)
-            window.setLayout(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                if (target == 0) WindowManager.LayoutParams.MATCH_PARENT else target,
-            )
             android.util.Log.i(
                 "MoonOverlay",
-                "клавиатура: " + if (target == 0) "скрыта, полный экран" else "окно сжато до " + target,
+                "клавиатура: " + if (hidden) "слой скрыт" else "слой возвращён",
             )
         }
     }
@@ -397,12 +412,35 @@ object Overlay {
         action: Int = event.actionMasked,
         index: Int = event.actionIndex,
     ) {
-        Native.touch(
-            event.getX(index),
-            event.getY(index),
-            action,
-            event.getPointerId(index),
-        )
+        var x = event.getX(index)
+        var y = event.getY(index)
+        // Координаты нашего окна → координаты вьюпорта игры: они расходятся из-за
+        // выреза, системных панелей и масштаба поверхности (тапы уезжали на 1–2 слота).
+        val ourW = screenPx
+        val ourH = screenPy
+        if (gameW > 0 && gameH > 0 && ourW > 0f && ourH > 0f &&
+            (kotlin.math.abs(gameW - ourW) > 1f || kotlin.math.abs(gameH - ourH) > 1f)
+        ) {
+            x = x * gameW / ourW
+            y = y * gameH / ourH
+        }
+        Native.touch(x, y, action, event.getPointerId(index))
+        if (action == android.view.MotionEvent.ACTION_DOWN) {
+            touchReport(
+                x.roundToInt().toString() + "," + y.roundToInt() +
+                    " | наше " + ourW.roundToInt() + "x" + ourH.roundToInt() +
+                    " | игра " + gameW + "x" + gameH,
+            )
+        }
+    }
+
+    /** Отчёт о координатах тапов: один файл, обрезаем по размеру. */
+    private fun touchReport(line: String) {
+        runCatching {
+            val file = File("/sdcard/MoonMC/horizon", "moonmc-touch.txt")
+            if (file.length() > 16_384) file.delete()
+            file.appendText(line + "\n")
+        }
     }
 
     /** Раскладка: своя из папки игры, иначе встроенная из assets. */
@@ -438,6 +476,9 @@ object Overlay {
         LaunchedEffect(Unit) {
             while (true) {
                 applyKeyboard(activity, openedNow || editorOpen)
+                // Размер окна игры: по нему пересчитываем координаты тапов.
+                gameW = runCatching { Native.viewportWidth() }.getOrDefault(0)
+                gameH = runCatching { Native.viewportHeight() }.getOrDefault(0)
                 val menu = runCatching { Native.inMenu() }.getOrDefault(false)
                 if (menu != inMenu) inMenu = menu
                 if (!ready) {

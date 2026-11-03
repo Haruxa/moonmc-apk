@@ -79,8 +79,10 @@ import com.movtery.layer_controller.ControlEditorLayer
 import com.movtery.layer_controller.data.ButtonPosition
 import com.movtery.layer_controller.data.ButtonSize
 import com.movtery.layer_controller.data.VisibilityType
+import com.movtery.layer_controller.data.cloneNew
 import com.movtery.layer_controller.event.ClickEvent
 import com.movtery.layer_controller.layout.createNewLayer
+import com.movtery.layer_controller.observable.DefaultObservableJoystickStyle
 import com.movtery.layer_controller.observable.ObservableButtonStyle
 import com.movtery.layer_controller.observable.ObservableControlLayer
 import com.movtery.layer_controller.observable.ObservableControlLayout
@@ -575,30 +577,53 @@ private fun StylesTab(
 ) {
     val styles by layout.styles.collectAsState()
     val joystickStyles by layout.joystickStyles.collectAsState()
-    var editing by remember { mutableStateOf<ObservableButtonStyle?>(null) }
+    val layers by layout.layers.collectAsState()
+
+    // Кто пользуется стилем: без этого непонятно, что вообще меняется.
+    fun users(uuid: String): Int = layers.sumOf { layer ->
+        layer.normalButtons.value.count { it.buttonStyle == uuid } +
+            layer.textBoxes.value.count { it.buttonStyle == uuid }
+    }
+
+    val selectedStyle = when (selected) {
+        is ObservableNormalData -> selected.buttonStyle
+        is ObservableTextData -> selected.buttonStyle
+        else -> null
+    }
+    // Сразу раскрываем стиль выбранной кнопки — правки видно без поисков.
+    var editing by remember(selectedStyle) {
+        mutableStateOf(styles.firstOrNull { it.uuid == selectedStyle })
+    }
 
     Column(
         modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Text("Стили кнопок", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         styles.forEach { style ->
+            val used = users(style.uuid)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier
                         .size(20.dp)
-                        .background(style.lightStyle.backgroundColor, RoundedCornerShape(6.dp))
+                        .background(
+                            if (style.commonStyle) style.lightStyle.backgroundColor
+                            else style.darkStyle.backgroundColor,
+                            RoundedCornerShape(6.dp),
+                        )
                 )
                 Spacer(Modifier.width(8.dp))
-                Text(
-                    style.name,
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f),
-                )
+                Column(Modifier.weight(1f)) {
+                    Text(style.name, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+                    Text(
+                        "используется: " + used,
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 IconButton(onClick = {
                     when (selected) {
                         is ObservableNormalData -> selected.buttonStyle = style.uuid
@@ -612,27 +637,46 @@ private fun StylesTab(
                 IconButton(onClick = { layout.removeStyle(style.uuid) }) {
                     Icon(Icons.Filled.Delete, "Удалить")
                 }
-                IconButton(onClick = { editing = style }) {
-                    Icon(Icons.Filled.KeyboardArrowDown, "Цвета")
+                IconButton(onClick = { editing = if (editing === style) null else style }) {
+                    Icon(
+                        if (editing === style) Icons.Filled.KeyboardArrowUp
+                        else Icons.Filled.KeyboardArrowDown,
+                        "Цвета",
+                    )
                 }
             }
             if (editing === style) {
-                ColorRows(
-                    config = if (style.commonStyle) style.lightStyle else style.darkStyle,
-                    onCommon = { style.commonStyle = it },
-                )
+                SwitchRow("Общий стиль", style.commonStyle) { style.commonStyle = it }
+                ColorRows(if (style.commonStyle) style.lightStyle else style.darkStyle)
             }
         }
         HorizontalDivider()
         Text("Стили стика", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (joystickStyles.isEmpty()) {
+            Text(
+                "Во встроенной раскладке стилей стика нет",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = {
+                // Создаём стик-стиль из библиотечного образца: без него раздел пуст.
+                val made = DefaultObservableJoystickStyle.pack().cloneNew()
+                layout.addJoystickStyle(made)
+                (selected as? ObservableJoystickData)?.joystickStyleId = made.uuid
+            }) { Text("Создать стиль стика", fontSize = 12.sp) }
+        }
         joystickStyles.forEach { style ->
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    style.name,
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f),
-                )
+                Column(Modifier.weight(1f)) {
+                    Text(style.name, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+                    Text(
+                        "используется: " + layers.sumOf { layer ->
+                            layer.joystickButtons.value.count { it.joystickStyleId == style.uuid }
+                        },
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 IconButton(onClick = {
                     (selected as? ObservableJoystickData)?.joystickStyleId = style.uuid
                 }) { Icon(Icons.Filled.Done, "Назначить") }
@@ -647,34 +691,66 @@ private fun StylesTab(
     }
 }
 
-/** Цвета стиля: hex-поля и прозрачность. */
+/** Цвета стиля: образец, каналы RGBA и hex только для чтения. */
 @Composable
-private fun ColorRows(config: ObservableStyleConfig, onCommon: (Boolean) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        HexRow("Фон", config.backgroundColor) { config.backgroundColor = it }
-        HexRow("Текст", config.contentColor) { config.contentColor = it }
-        HexRow("Рамка", config.borderColor) { config.borderColor = it }
+private fun ColorRows(config: ObservableStyleConfig) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        ColorPicker("Фон", config.backgroundColor) { config.backgroundColor = it }
+        ColorPicker("Текст", config.contentColor) { config.contentColor = it }
+        ColorPicker("Рамка", config.borderColor) { config.borderColor = it }
         SliderRow("Прозрачность", config.alpha, 0f..1f) { config.alpha = it }
     }
 }
 
+/** Цвет: образец и ползунки каналов — видно и понятно без познаний в hex. */
 @Composable
-private fun HexRow(label: String, color: Color, onChange: (Color) -> Unit) {
-    var text by remember { mutableStateOf(String.format("#%08X", color.toArgb())) }
+private fun ColorPicker(label: String, color: Color, onChange: (Color) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val r = (color.red * 255f).toInt()
+    val g = (color.green * 255f).toInt()
+    val b = (color.blue * 255f).toInt()
+    val a = (color.alpha * 255f).toInt()
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(78.dp))
-        OutlinedTextField(
-            value = text,
-            onValueChange = { value ->
-                text = value
-                runCatching { android.graphics.Color.parseColor(value) }
-                    .onSuccess { onChange(Color(it)) }
-            },
-            singleLine = true,
-            modifier = Modifier.weight(1f),
+        Box(
+            Modifier
+                .size(22.dp)
+                .background(color, RoundedCornerShape(6.dp))
         )
         Spacer(Modifier.width(8.dp))
-        Box(Modifier.size(20.dp).background(color, RoundedCornerShape(6.dp)))
+        Text(
+            label,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            String.format("#%08X", color.toArgb()),
+            fontSize = 9.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TextButton(onClick = { open = !open }) {
+            Text(if (open) "Готово" else "Изменить", fontSize = 11.sp)
+        }
+    }
+    if (open) {
+        ChannelRow("R", r) { onChange(Color(it, g, b, a)) }
+        ChannelRow("G", g) { onChange(Color(r, it, b, a)) }
+        ChannelRow("B", b) { onChange(Color(r, g, it, a)) }
+        ChannelRow("A", a) { onChange(Color(r, g, b, it)) }
+    }
+}
+
+@Composable
+private fun ChannelRow(label: String, value: Int, onChange: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontSize = 11.sp, modifier = Modifier.width(16.dp))
+        Slider(
+            value = value.coerceIn(0, 255).toFloat(),
+            onValueChange = { onChange(it.toInt().coerceIn(0, 255)) },
+            valueRange = 0f..255f,
+            modifier = Modifier.weight(1f),
+        )
+        Text(value.toString(), fontSize = 10.sp, modifier = Modifier.width(30.dp))
     }
 }
 

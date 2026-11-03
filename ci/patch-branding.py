@@ -110,42 +110,230 @@ NEW_CONNECTION = '''            if (connection == null) {
             }
             return connection;'''
 
-# MoonMC: «готово/отправить» и Enter сначала отдают игре набранное, потом жмут Enter
-# и закрывают клавиатуру: сообщение ушло — ввод больше не нужен.
-OLD_SUBMIT = '''                if (code == KeyEvent.KEYCODE_ENTER) {
-                    nativeKey(KeyEvent.KEYCODE_ENTER);'''
-
-NEW_SUBMIT = '''                if (code == KeyEvent.KEYCODE_ENTER) {
-                    sync();
-                    nativeKey(KeyEvent.KEYCODE_ENTER);
-                    hideKeyboard();'''
-
-OLD_ACTION = '''        public boolean performEditorAction(int action) {
-            nativeKey(KeyEvent.KEYCODE_ENTER);'''
-
-NEW_ACTION = '''        public boolean performEditorAction(int action) {
-            sync();
-            nativeKey(KeyEvent.KEYCODE_ENTER);
-            hideKeyboard();'''
-
 # Кнопка в самой клавиатуре — «отправить», а не безликая «готово».
 OLD_OPTIONS = '''            info.imeOptions = EditorInfo.IME_ACTION_DONE;'''
 
 NEW_OPTIONS = '''            info.imeOptions = EditorInfo.IME_ACTION_SEND;'''
 
-# Метод закрытия клавиатуры: вставляет перед report() в Connection.
-OLD_REPORT = '''        private void report() {'''
+# MoonMC: своё соединение с клавиатурой. Раньше весь текст шёл через getEditable(),
+# а у обычного View его нет: sync() падал до нажатия Enter, поэтому кнопка
+# «отправить» ничего не делала, а буквы множились. Теперь источник истины —
+# собственный буфер, а getEditable() не используется вовсе.
+NEW_CONNECTION_CLASS = '''    static final class Connection extends BaseInputConnection {
+        private final View view;
+        /** MoonMC: буфер набранного — источник истины вместо getEditable(). */
+        private final StringBuilder typing = new StringBuilder();
+        /** Текст в процессе автозамены: ещё не подтверждён. */
+        private final StringBuilder composing = new StringBuilder();
+        /** Что уже отдано игре. */
+        private String sent = "";
+        /** The keyboard's full-screen editor follows the text (getExtractedText's monitor). */
+        private int monitor = -1;
 
-NEW_REPORT = '''        /** MoonMC: «отправить» закрывает клавиатуру — сообщение уже ушло в игру. */
+        Connection(View view) {
+            super(view, true);
+            this.view = view;
+        }
+
+        /** Текст, который должен быть в поле: подтверждённое + автозамена. */
+        private String current() {
+            return typing.toString() + composing;
+        }
+
+        /** The field took the text (Enter) or changed: the keyboard starts over. */
+        void reset() {
+            typing.setLength(0);
+            composing.setLength(0);
+            sent = "";
+            monitor = -1;
+            try {
+                InputMethodManager imm = (InputMethodManager) view.getContext()
+                    .getSystemService(Context.INPUT_METHOD_SERVICE);
+                imm.restartInput(view);
+            } catch (Throwable error) {
+                log("reset", error);
+            }
+        }
+
+        /** Диагностика ввода: рядом с игрой, плюс строка в лог. */
+        private void log(String what, Throwable error) {
+            String line = what + ": " + error + System.lineSeparator();
+            try {
+                java.io.File dir = new java.io.File("/sdcard/MoonMC/horizon");
+                dir.mkdirs();
+                java.io.File file = new java.io.File(dir, "moonmc-ime.txt");
+                if (file.length() > 32768) {
+                    file.delete();
+                }
+                java.io.FileWriter writer = new java.io.FileWriter(file, true);
+                writer.write(line);
+                writer.close();
+            } catch (Throwable ignored) {
+            }
+            android.util.Log.w("MoonIME", line);
+        }
+
+        private ExtractedText extracted() {
+            String now = current();
+            ExtractedText text = new ExtractedText();
+            text.text = now;
+            text.startOffset = 0;
+            text.selectionStart = now.length();
+            text.selectionEnd = now.length();
+            return text;
+        }
+
+        /** The keyboard's view of the editor: the selection as it is. */
+        private void report() {
+            try {
+                InputMethodManager imm = (InputMethodManager) view.getContext()
+                    .getSystemService(Context.INPUT_METHOD_SERVICE);
+                int length = current().length();
+                imm.updateSelection(view, length, length, -1, -1);
+                if (monitor >= 0) {
+                    imm.updateExtractedText(view, monitor, extracted());
+                }
+            } catch (Throwable error) {
+                log("report", error);
+            }
+        }
+
+        @Override
+        public ExtractedText getExtractedText(ExtractedTextRequest request, int flags) {
+            if ((flags & GET_EXTRACTED_TEXT_MONITOR) != 0 && request != null) {
+                monitor = request.token;
+            }
+            return extracted();
+        }
+
+        /** Отдать игре разницу: стереть лишнее, дописать новое. Из буфера, не из Editable. */
+        private void sync() {
+            try {
+                String now = current();
+                int common = 0;
+                int max = Math.min(now.length(), sent.length());
+                while (common < max && now.charAt(common) == sent.charAt(common)) {
+                    common++;
+                }
+                int deleted = sent.codePointCount(common, sent.length());
+                for (int i = 0; i < deleted; i++) {
+                    nativeKey(KeyEvent.KEYCODE_DEL);
+                }
+                if (common < now.length()) {
+                    nativeText(now.substring(common));
+                }
+                sent = now;
+                report();
+            } catch (Throwable error) {
+                log("sync", error);
+            }
+        }
+
+        /** Отправка: набранное в игру, Enter — сообщение ушло, клавиатура закрылась. */
+        private void submit() {
+            try {
+                sync();
+                nativeKey(KeyEvent.KEYCODE_ENTER);
+            } catch (Throwable error) {
+                log("submit", error);
+            }
+            reset();
+            hideKeyboard();
+        }
+
         private void hideKeyboard() {
-            InputMethodManager imm = (InputMethodManager) view.getContext()
-                .getSystemService(Context.INPUT_METHOD_SERVICE);
-            imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
-            view.clearFocus();
+            try {
+                InputMethodManager imm = (InputMethodManager) view.getContext()
+                    .getSystemService(Context.INPUT_METHOD_SERVICE);
+                imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
+                view.clearFocus();
+            } catch (Throwable error) {
+                log("hide", error);
+            }
             OverlayBridge.gameKeyboard(false);
         }
 
-        private void report() {'''
+        /** Убрать последний символ из буфера; false — стирать нечего. */
+        private boolean backspace() {
+            if (composing.length() > 0) {
+                composing.setLength(composing.length() - 1);
+                return true;
+            }
+            if (typing.length() > 0) {
+                typing.setLength(typing.length() - 1);
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public boolean commitText(CharSequence text, int position) {
+            composing.setLength(0);
+            if (text != null) {
+                typing.append(text);
+            }
+            sync();
+            return true;
+        }
+
+        @Override
+        public boolean setComposingText(CharSequence text, int position) {
+            composing.setLength(0);
+            if (text != null) {
+                composing.append(text);
+            }
+            sync();
+            return true;
+        }
+
+        @Override
+        public boolean finishComposingText() {
+            typing.append(composing);
+            composing.setLength(0);
+            sync();
+            return true;
+        }
+
+        @Override
+        public boolean deleteSurroundingText(int before, int after) {
+            for (int i = 0; i < before; i++) {
+                backspace();
+            }
+            sync();
+            return before + after > 0;
+        }
+
+        @Override
+        public boolean sendKeyEvent(KeyEvent event) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                int code = event.getKeyCode();
+                if (code == KeyEvent.KEYCODE_DEL) {
+                    if (!backspace()) {
+                        nativeKey(KeyEvent.KEYCODE_DEL);
+                    }
+                    sync();
+                    return true;
+                }
+                if (code == KeyEvent.KEYCODE_ENTER) {
+                    submit();
+                    return true;
+                }
+                int unicode = event.getUnicodeChar();
+                if (unicode != 0) {
+                    typing.append(new String(Character.toChars(unicode)));
+                    sync();
+                    return true;
+                }
+            }
+            return event.getAction() == KeyEvent.ACTION_UP || super.sendKeyEvent(event);
+        }
+
+        @Override
+        public boolean performEditorAction(int action) {
+            submit();
+            return true;
+        }
+'''
 
 OVERLAY = '''        // MoonMC: любая необработанная ошибка пишется рядом с игрой — иначе краш
         // на старте нечем диагностировать (лог Rust в этот момент ещё пуст).
@@ -374,9 +562,6 @@ def main() -> int:
             (OLD_KEYBOARD, NEW_KEYBOARD, "setKeyboard"),
             (OLD_CONNECTION, NEW_CONNECTION, "onCreateInputConnection"),
             (OLD_OPTIONS, NEW_OPTIONS, "imeOptions"),
-            (OLD_REPORT, NEW_REPORT, "hideKeyboard"),
-            (OLD_SUBMIT, NEW_SUBMIT, "sendKeyEvent(ENTER)"),
-            (OLD_ACTION, NEW_ACTION, "performEditorAction"),
         ):
             if old not in code:
                 die(f"HorizonActivity.java: не нашёл блок {what}")
@@ -388,6 +573,17 @@ def main() -> int:
             die("HorizonActivity.java: остались упоминания MargyMC")
         pathlib.Path(ACTIVITY).write_text(code)
         print("экран загрузки: AlertDialog MargyMC -> MoonSplash MoonMC")
+
+    # 5. Клавиатура: своё соединение с буфером набранного (отправка, backspace, без дублей).
+    if "MoonMC: буфер набранного" not in code:
+        marker = "    static final class Connection extends BaseInputConnection {"
+        index = code.find(marker)
+        if index < 0:
+            die("HorizonActivity.java: не нашёл class Connection")
+        # class Connection — последнее в файле: хвост заменяем целиком.
+        code = code[:index] + NEW_CONNECTION_CLASS + "\n    }\n}\n"
+        pathlib.Path(ACTIVITY).write_text(code, encoding="utf-8")
+        print("экран: клавиатура на своём буфере (отправка и backspace)")
     if not label or label.group(1) != LABEL:
         die("не удалось выставить android:label")
     return 0

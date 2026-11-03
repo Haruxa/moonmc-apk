@@ -650,6 +650,23 @@ def patch_setup_incremental() -> None:
     run_old = """pub fn run(app: &AndroidApp, home: &Path, status: fn(&str), restart: fn()) {
     let shared = Arc::new(Mutex::new((String::new(), None::<bool>)));"""
     run_new = """pub fn run(app: &AndroidApp, home: &Path, status: fn(&str), restart: fn()) {
+    // MoonMC: сначала права — без них нечего проверять на /sdcard.
+    if !crate::all_files_access() {
+        status("Разрешите доступ ко всем файлам — проверим, что уже готово.");
+        moon_setup_log(home, "прав нет: просим доступ до проверки");
+        crate::ask_all_files_access();
+        for _ in 0..240 {
+            if crate::all_files_access() {
+                break;
+            }
+            app.poll_events(Some(Duration::from_millis(100)), |_| {});
+            std::thread::sleep(Duration::from_millis(400));
+        }
+        moon_setup_log(
+            home,
+            &format!("доступ после запроса: {}", crate::all_files_access()),
+        );
+    }
     // MoonMC: вс‘ уже на месте — экран подготовки не нужен, сразу в игру.
     let missing = moon_missing(home);
     moon_setup_log(home, &format!("пропуск подготовки: не хватает {missing:?}"));

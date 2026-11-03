@@ -224,6 +224,26 @@ pub extern "system" fn Java_dev_moonmc_game_Native_inMenuNative(
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 /// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
+pub extern "system" fn Java_dev_moonmc_game_Native_viewportWidth(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+) -> jni::sys::jint {
+    crate::moon_input::viewport_width()
+}
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
+pub extern "system" fn Java_dev_moonmc_game_Native_viewportHeight(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+) -> jni::sys::jint {
+    crate::moon_input::viewport_height()
+}
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
 pub extern "system" fn Java_dev_moonmc_game_Native_readyNative(
     _env: jni::JNIEnv,
     _class: jni::objects::JClass,
@@ -380,7 +400,11 @@ pub extern "system" fn Java_dev_moonmc_game_Native_enterNative(
         }
         crate::moon_input::set_keyboard_up(self.touch.keyboard);
         crate::moon_input::set_account(&self.options.player_name());
-        crate::moon_input::set_in_menu(self.touch_in_menu());"""
+        crate::moon_input::set_in_menu(self.touch_in_menu());
+        // MoonMC: размер окна игры — слой пересчитывает по нему координаты тапов.
+        if let Some(size) = self.window.as_ref().map(|w| w.inner_size()) {
+            crate::moon_input::set_viewport(size.width, size.height);
+        }"""
             text = text.replace(anchor, body, 1)
             TOUCH.write_text(text)
             print("touch.rs: очередь моста разбирается в кадре")
