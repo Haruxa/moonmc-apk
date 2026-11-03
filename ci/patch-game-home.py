@@ -476,19 +476,15 @@ def patch_prepared() -> None:
 pub fn prepared(home: &Path) -> bool {
     home.join(RESOURCES).join("horizon-resources.json").is_file()
 }"""
-    new = """/// The resources are prepared.
+    new = """/// The resources are prepared: Java and the resource files, without hashing them.
 pub fn prepared(home: &Path) -> bool {
-    if !home.join(RESOURCES).join("horizon-resources.json").is_file() {
-        return false;
-    }
-    // MoonMC: Java живёт в приватной папке приложения (её стирает удаление APK),
-    // но может лежать и рядом с игрой: готово, если исполняемый java нашёлся хоть где-то.
-    if moon_java_ready(&home.join("jre")) {
-        return true;
-    }
-    std::env::var_os("HORIZON_PRIVATE_HOME")
+    let java = std::env::var_os("HORIZON_PRIVATE_HOME")
         .map(std::path::PathBuf::from)
-        .is_some_and(|dir| moon_java_ready(&dir.join("jre")))
+        .map(|dir| dir.join("jre"))
+        .unwrap_or_else(|| home.join("jre"));
+    // MoonMC: быстрая проверка — только имена и права, без пересчёта хешей.
+    (moon_java_ready(&home.join("jre")) || moon_java_ready(&java))
+        && moon_resources_ready(&home.join(RESOURCES))
 }
 
 /// Исполняемый ли `bin/java`: тот же признак, что у пересборки JRE.
@@ -497,12 +493,130 @@ fn moon_java_ready(jre: &Path) -> bool {
     std::fs::metadata(jre.join("bin/java"))
         .map(|m| m.permissions().mode() & 0o111 != 0)
         .unwrap_or(false)
+}
+
+/// Ресурсы игры на месте: манифест и обязательные файлы (проверка имён, не содержимого).
+fn moon_resources_ready(resources: &Path) -> bool {
+    for name in [
+        "horizon-resources.json",
+        "facts.json",
+        "block-tags.json",
+        "model-states.json",
+    ] {
+        if !resources.join(name).is_file() {
+            return false;
+        }
+    }
+    std::fs::read_dir(resources.join("data"))
+        .map(|mut dir| dir.next().is_some())
+        .unwrap_or(false)
+}
+
+/// Экспортёры распакованы: по файлу, который нужен самой подготовке.
+fn moon_exporters_ready(home: &Path) -> bool {
+    home.join("mods/horizon/src/test/java/dev/horizonlab/parity/VanillaHeightmapOracle.java")
+        .is_file()
+}
+
+/// Чего не хватает для игры: пусто — можно стартовать.
+fn moon_missing(home: &Path) -> Vec<&'static str> {
+    let java = std::env::var_os("HORIZON_PRIVATE_HOME")
+        .map(std::path::PathBuf::from)
+        .map(|dir| dir.join("jre"))
+        .unwrap_or_else(|| home.join("jre"));
+    let resources = home.join(RESOURCES);
+    let mut missing = Vec::new();
+    if !moon_java_ready(&java) && !moon_java_ready(&home.join("jre")) {
+        missing.push("java");
+    }
+    if !moon_exporters_ready(home) {
+        missing.push("exporters");
+    }
+    if !moon_resources_ready(&resources) {
+        missing.push("resources");
+    }
+    if !resources.join("assets/minecraft/sounds.json").is_file() {
+        missing.push("sounds");
+    }
+    missing
 }"""
     if old not in text:
         print("::warning::android_setup.rs: не нашёл prepared(), проверку готовности пропускаю")
         return
     path.write_text(text.replace(old, new, 1))
     print("android_setup.rs: готовность = маркер + исполняемый java")
+
+
+def patch_setup_incremental() -> None:
+    """Подготовка делает только недостающее: готовые ресурсы и экспортёры не трогает."""
+    path = pathlib.Path("crates/horizon-client/src/android_setup.rs")
+    if not path.is_file():
+        return
+    text = path.read_text()
+    if "moon_resources_ready(&resources)" in text:
+        print("android_setup.rs: пошаговая подготовка уже наложена")
+        return
+
+    exporters_old = """    // Horizon's exporters (sources, classes, research-lock.json): every start, they are small.
+    log("Unpacking Horizon's exporters...");
+    let kit = kit.ok_or("This build has no exporters.")?;
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(kit)).map_err(|e| e.to_string())?;
+    zip.extract(home).map_err(|e| e.to_string())?;"""
+    exporters_new = """    // MoonMC: экспортёры распаковываем только если их нет — обычно они уже здесь.
+    if !moon_exporters_ready(home) {
+        log("Unpacking Horizon's exporters...");
+        let kit = kit.ok_or("This build has no exporters.")?;
+        let mut zip =
+            zip::ZipArchive::new(std::io::Cursor::new(kit)).map_err(|e| e.to_string())?;
+        zip.extract(home).map_err(|e| e.to_string())?;
+    }"""
+    if exporters_old not in text:
+        print("::warning::android_setup.rs: не нашёл распаковку экспортёров")
+        return
+    text = text.replace(exporters_old, exporters_new, 1)
+
+    prepare_old = """    log("Preparing the resources from your Minecraft (a few minutes)...");
+    horizon_prepare::prepare(&options, log)?;
+    // The sounds are optional: a failure leaves the game silent, not broken.
+    if let Err(e) = horizon_prepare::sounds(home, Some(&minecraft), log) {
+        log::warn!("Prepare: no sounds: {e}");
+    }"""
+    prepare_new = """    // MoonMC: чего нет — только то и собираем. Готовые ресурсы не трогаем совсем:
+    // полная подготовка идёт минутами, а проверка занимает миллисекунды.
+    let resources = home.join(RESOURCES);
+    if moon_resources_ready(&resources) {
+        log("Ресурсы уже на месте — подготовка не нужна.");
+    } else {
+        log("Preparing the resources from your Minecraft (a few minutes)...");
+        horizon_prepare::prepare(&options, log)?;
+    }
+    // The sounds are optional: a failure leaves the game silent, not broken.
+    if !resources.join("assets/minecraft/sounds.json").is_file() {
+        if let Err(e) = horizon_prepare::sounds(home, Some(&minecraft), log) {
+            log::warn!("Prepare: no sounds: {e}");
+        }
+    }"""
+    if prepare_old not in text:
+        print("::warning::android_setup.rs: не нашёл вызов подготовки ресурсов")
+        path.write_text(text)
+        return
+    text = text.replace(prepare_old, prepare_new, 1)
+
+    run_old = """pub fn run(app: &AndroidApp, home: &Path, status: fn(&str), restart: fn()) {
+    let shared = Arc::new(Mutex::new((String::new(), None::<bool>)));"""
+    run_new = """pub fn run(app: &AndroidApp, home: &Path, status: fn(&str), restart: fn()) {
+    // MoonMC: всё уже на месте — экран подготовки не нужен, сразу в игру.
+    if moon_missing(home).is_empty() {
+        restart();
+        return;
+    }
+    let shared = Arc::new(Mutex::new((String::new(), None::<bool>)));"""
+    if run_old in text:
+        text = text.replace(run_old, run_new, 1)
+    else:
+        print("::warning::android_setup.rs: не нашёл run(), ранний выход пропущен")
+    path.write_text(text)
+    print("android_setup.rs: подготовка по шагам (java/экспортёры/ресурсы/звуки)")
 
 
 def main() -> int:
@@ -528,6 +642,7 @@ def main() -> int:
     patch_library_dir()
     patch_jre_bits()
     patch_prepared()
+    patch_setup_incremental()
 
     # 2a. Порт как крейт рабочего пространства
     patch_workspace()

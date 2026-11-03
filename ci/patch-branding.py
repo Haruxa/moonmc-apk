@@ -343,6 +343,27 @@ def main() -> int:
         code = code.replace(anchor, anchor + "\n" + OVERLAY, 1)
         pathlib.Path(ACTIVITY).write_text(code)
         print("экран: игровой слой подключён")
+
+    # Вырез камеры: игра и слой занимают его тоже, чёрной полосы быть не должно.
+    if "LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES" not in code:
+        anchor = "        addContentView(input, new ViewGroup.LayoutParams(1, 1));"
+        if anchor in code:
+            cutout = (
+                "\n        // MoonMC: вырез камеры не должен отнимать у игры часть экрана.\n"
+                "        if (android.os.Build.VERSION.SDK_INT >= 28) {\n"
+                "            android.view.WindowManager.LayoutParams cutout =\n"
+                "                getWindow().getAttributes();\n"
+                "            cutout.layoutInDisplayCutoutMode =\n"
+                "                android.view.WindowManager.LayoutParams"
+                ".LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;\n"
+                "            getWindow().setAttributes(cutout);\n"
+                "        }"
+            )
+            code = code.replace(anchor, anchor + cutout, 1)
+            pathlib.Path(ACTIVITY).write_text(code, encoding="utf-8")
+            print("экран: вырез камеры проигнорирован (SHORT_EDGES)")
+        else:
+            print("::warning::HorizonActivity.java: не нашёл onCreate для выреза")
     if "MoonSplash" in code:
         print("экран загрузки: уже пропатчен")
     else:

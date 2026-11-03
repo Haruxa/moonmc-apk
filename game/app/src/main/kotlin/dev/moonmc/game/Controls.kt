@@ -9,7 +9,6 @@
 package dev.moonmc.game
 
 import android.app.Activity
-import android.net.Uri
 import com.movtery.inputmap.keycodes.ControlEventKeycode
 import com.movtery.layer_controller.data.ButtonPosition
 import com.movtery.layer_controller.data.ButtonSize
@@ -57,18 +56,22 @@ object Controls {
 
     private fun file(name: String) = File(dir(), safeName(name) + ".json")
 
-    /** Профили: встроенный первым, дальше файлы по алфавиту. */
+    /** Профили: встроенный первым, дальше файлы по алфавиту. Нет доступа — только встроенный. */
     fun names(): List<String> {
-        val files = dir().listFiles { f -> f.isFile && f.name.endsWith(".json") }
-            ?.map { it.name.removeSuffix(".json") }
-            ?.sorted()
-            .orEmpty()
+        val files = runCatching {
+            dir().listFiles { f -> f.isFile && f.name.endsWith(".json") }
+                ?.map { it.name.removeSuffix(".json") }
+                ?.sorted()
+                .orEmpty()
+        }.getOrDefault(emptyList())
         return listOf(BUILTIN) + files.filter { it != BUILTIN }
     }
 
     fun current(): String {
         val name = runCatching { File(dir(), CURRENT).readText().trim() }.getOrDefault("")
-        return if (name.isNotEmpty() && (name == BUILTIN || file(name).isFile)) name else BUILTIN
+        if (name.isEmpty()) return BUILTIN
+        val exists = runCatching { name == BUILTIN || file(name).isFile }.getOrDefault(false)
+        return if (exists) name else BUILTIN
     }
 
     fun setCurrent(name: String) {
@@ -162,10 +165,8 @@ object Controls {
     }
 
     /** Импорт чужого профиля: Zalith/LayerController JSON или Pojav controlmap. */
-    fun import(activity: Activity, uri: Uri, name: String): String? {
-        val text = runCatching {
-            activity.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-        }.getOrNull() ?: return "Файл не читается"
+    fun import(activity: Activity, file: File, name: String): String? {
+        val text = runCatching { file.readText() }.getOrNull() ?: return "Файл не читается"
         if (text.isBlank()) return "Файл пустой"
 
         val layout = when {

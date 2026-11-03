@@ -19,8 +19,6 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
@@ -178,6 +176,13 @@ object Overlay {
             )
             setDimAmount(0f)
             addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+            // Вырез камеры не должен сужать слой: иначе он в других координатах, чем игра.
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                attributes = attributes.apply {
+                    layoutInDisplayCutoutMode =
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+            }
         }
         dialog = d
         step(activity, "dialog ok")
@@ -221,14 +226,51 @@ object Overlay {
         }
     }.getOrDefault(false)
 
-    /** Клавиатура поднялась: слой остаётся на месте и нажимается (Esc из него). */
+    /** Клавиатура поднялась: слой ужимается в область над ней — иначе его кнопки
+     * лежат поверх клавиш и печатать нельзя. Esc остаётся вверху слева и нажимается. */
     private fun applyKeyboard(up: Boolean, activity: Activity) {
         if (up == keyboardHidden) return
         keyboardHidden = up
         runCatching {
-            android.util.Log.i("MoonOverlay", "клавиатура: " + (if (up) "показана" else "скрыта"))
+            val window = dialog?.window ?: return@runCatching
+            val screen = resources(activity).heightPixels
+            val ime = if (up) imeHeightPx(activity) else 0
+            // Совсем маленькое окно хуже, чем ничего: тогда оставляем как есть.
+            val narrow = ime > screen / 6
+            window.setGravity(if (narrow) android.view.Gravity.TOP else android.view.Gravity.CENTER)
+            if (narrow) {
+                window.setLayout(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    (screen - ime).coerceAtLeast(screen / 4),
+                )
+            } else {
+                window.setLayout(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                )
+            }
+            android.util.Log.i(
+                "MoonOverlay",
+                "клавиатура: " + (if (up) "показана, окно сжато до " + (screen - ime) else "скрыта"),
+            )
         }
     }
+
+    /** Высота системной клавиатуры в пикселях: 0 — её нет. */
+    private fun imeHeightPx(activity: Activity): Int = runCatching {
+        val decor = activity.window.decorView
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            decor.rootWindowInsets
+                ?.getInsets(android.view.WindowInsets.Type.ime())
+                ?.bottom ?: 0
+        } else {
+            val frame = android.graphics.Rect()
+            decor.getWindowVisibleDisplayFrame(frame)
+            (decor.height - frame.bottom).coerceAtLeast(0)
+        }
+    }.getOrDefault(0)
+
+    private fun resources(activity: Activity) = activity.resources.displayMetrics
 
     /** Панель открыта: окно получает фокус (иначе поле ника не набрать), закрыта — обратно. */
     private fun panelFocus(open: Boolean) {
@@ -495,6 +537,13 @@ object Overlay {
             LaunchedEffect(screenW, screenH) {
                 if (gear.x < 0f) {
                     gear = Offset(screenW - gearSize - 24f, screenH * 0.32f)
+                } else {
+                    // Окно сжалось под клавиатуру — шестерня не должна убежать за край.
+                    val maxX = (screenW - gearSize).coerceAtLeast(0f)
+                    val maxY = (screenH - gearSize).coerceAtLeast(0f)
+                    if (gear.x > maxX || gear.y > maxY) {
+                        gear = Offset(gear.x.coerceIn(0f, maxX), gear.y.coerceIn(0f, maxY))
+                    }
                 }
             }
             val editor = editing
@@ -742,26 +791,13 @@ object Overlay {
         var note by remember { mutableStateOf<String?>(null) }
         var renaming by remember { mutableStateOf<String?>(null) }
         var pendingDelete by remember { mutableStateOf<String?>(null) }
+        // Свой выбор файла: системный пикер требует ActivityResultRegistryOwner,
+        // которого у окна в NativeActivity нет — на нём вкладка и падала.
+        var picking by remember { mutableStateOf(false) }
 
         fun refresh() {
             names = Controls.names()
             current = Controls.current()
-        }
-
-        val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) {
-                val target = Controls.safeName(
-                    (Controls.names().size + 1).toString() + " import"
-                )
-                val error = Controls.import(activity, uri, target)
-                note = error ?: "Импортировано: $target"
-                // что не удалось перенести из Pojav — сразу в отчёт
-                if (importNotes.isNotEmpty()) {
-                    reportControls(activity, "импорт: " + importNotes.joinToString(", "))
-                }
-                refresh()
-                reloadLayout()
-            }
         }
 
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -852,7 +888,7 @@ object Overlay {
             }
 
             OutlinedButton(
-                onClick = { pick.launch(arrayOf("application/json", "text/plain", "*/*")) },
+                onClick = { picking = true },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Импорт (Zalith / Pojav)") }
 
@@ -861,6 +897,25 @@ object Overlay {
                 "Профили лежат в /sdcard/MoonMC/controls — файл из Zalith можно просто скопировать сюда",
                 fontSize = 10.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        if (picking) {
+            ImportDialog(
+                onDismiss = { picking = false },
+                onPick = { file ->
+                    val target = Controls.safeName(
+                        file.name.removeSuffix(".json").ifBlank { "import" }
+                    )
+                    val error = Controls.import(activity, file, target)
+                    note = error ?: "Импортировано: $target"
+                    if (importNotes.isNotEmpty()) {
+                        reportControls(activity, "импорт: " + importNotes.joinToString(", "))
+                    }
+                    picking = false
+                    refresh()
+                    reloadLayout()
+                },
             )
         }
 
@@ -904,6 +959,69 @@ object Overlay {
                 dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Отмена") } },
             )
         }
+    }
+
+    /** Выбор файла для импорта: папки, куда пользователь кладёт профили. */
+    private fun importCandidates(): List<File> {
+        val dirs = listOf(
+            File("/sdcard/Download"),
+            File("/sdcard/MoonMC/controls"),
+            File("/sdcard/Documents"),
+            File("/sdcard/MoonMC/horizon"),
+        )
+        return dirs.flatMap { dir ->
+            runCatching {
+                dir.listFiles { f -> f.isFile && f.name.endsWith(".json", ignoreCase = true) }
+                    ?.toList()
+                    .orEmpty()
+            }.getOrDefault(emptyList())
+        }.sortedBy { it.name.lowercase() }
+    }
+
+    /** Список найденных .json: тап — импорт выбранного файла. */
+    @Composable
+    private fun ImportDialog(onDismiss: () -> Unit, onPick: (File) -> Unit) {
+        var files by remember { mutableStateOf(importCandidates()) }
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Профиль из файла") },
+            text = {
+                Column(Modifier.fillMaxHeight(0.85f)) {
+                    if (files.isEmpty()) {
+                        Text(
+                            "В Download и /sdcard/MoonMC/controls нет .json",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        LazyColumn(Modifier.weight(1f)) {
+                            items(files, key = { it.absolutePath }) { file ->
+                                TextButton(
+                                    onClick = { onPick(file) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Column(Modifier.fillMaxWidth()) {
+                                        Text(
+                                            file.name,
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                        Text(
+                                            file.parent + " · " + (file.length() / 1024) + " КБ",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    TextButton(onClick = { files = importCandidates() }) { Text("Обновить") }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
+        )
     }
 
     @Composable
