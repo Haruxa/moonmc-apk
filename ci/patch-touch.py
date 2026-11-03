@@ -801,48 +801,37 @@ pub fn types_text(edit_modifier: bool, alt: bool, altgr_is_ctrl_alt: bool) -> bo
                 body = body + "\n" + block
             clip.write_text(body)
             print("clipboard: добавил types_text/ALTGR_IS_CTRL_ALT")
-    # Возврат из фона: окно Android приходит с новой поверхностью, а wgpu-surface
+    # Возврат из фона: окно Android получает новую поверхность, а surface рендерера
     # держит старый ANativeWindow — кадры уходят в никуда (чёрный экран).
-    gfx = CLIENT / "gfx.rs"
-    if gfx.is_file():
-        body = gfx.read_text()
-        if "MoonMC: после фона окно получает новую поверхность" not in body:
-            old = """    pub fn resume_surface(&mut self) -> Result<()> {
-        if self.surface.is_some() || self.offscreen.is_some() {
-            return Ok(());
-        }"""
-            new = """    pub fn resume_surface(&mut self) -> Result<()> {
-        // MoonMC: после фона окно получает новую поверхность, а surface остаётся
-        // со старым указателем — поэтому он пересобирается всегда, а не только
-        // когда его нет вовсе.
-        if self.offscreen.is_some() {
-            return Ok(());
-        }"""
-            body = replace(body, old, new, "gfx.rs resume_surface")
-            gfx.write_text(body)
-            print("gfx.rs: surface пересобирается при возврате из фона")
-
     game = GAME.read_text()
-    if "MoonMC: перерисовать после возврата из фона" not in game:
-        old = """            if let Some(renderer) = &mut self.renderer
-                && let Err(e) = renderer.resume_surface()
+    if "MoonMC: возврат из фона" not in game:
+        old = """impl ApplicationHandler for Game<'_> {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+        // The Window constructor: created fullscreen when options.txt says so."""
+        new = """impl ApplicationHandler for Game<'_> {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_some() {
+            // MoonMC: возврат из фона — поверхность новая, старый surface не годится.
+            if let Some(renderer) = &mut self.renderer
+                && let Err(e) = renderer.recreate_surface()
             {
-                log::warn!("Horizon: the window's surface did not come back: {e}");
+                log::warn!("MoonMC: surface после фона не пересоздался: {e}");
             }
-            return;"""
-        new = """            if let Some(renderer) = &mut self.renderer
-                && let Err(e) = renderer.resume_surface()
-            {
-                log::warn!("Horizon: the window's surface did not come back: {e}");
-            }
-            // MoonMC: перерисовать после возврата из фона — кадр не ждёт нового события.
             if let Some(window) = &self.window {
                 window.request_redraw();
             }
-            return;"""
+            return;
+        }
+        // The Window constructor: created fullscreen when options.txt says so."""
         game = replace(game, old, new, "game.rs resumed()")
         GAME.write_text(game)
-        print("game.rs: перерисовка после возврата из фона")
+        if ERRORS:
+            print("::warning::game.rs: якорь resumed() не совпал — пересоздание surface пропущено")
+        else:
+            print("game.rs: surface пересоздаётся при возврате из фона")
 
     if ERRORS:
         sys.exit("patch-touch: движок не совпал с якорями — " + "; ".join(ERRORS))

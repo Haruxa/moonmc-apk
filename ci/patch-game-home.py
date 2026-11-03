@@ -507,7 +507,7 @@ fn moon_resources_ready(resources: &Path) -> bool {
             return false;
         }
     }
-    std::fs::read_dir(resources.join("data"))
+    std::fs::read_dir(resources.join("assets/minecraft"))
         .map(|mut dir| dir.next().is_some())
         .unwrap_or(false)
 }
@@ -553,7 +553,7 @@ def patch_setup_incremental() -> None:
     if not path.is_file():
         return
     text = path.read_text()
-    if "moon_resources_ready(&resources)" in text:
+    if "Ресурсы уже на месте — подготовка не нужна." in text:
         print("android_setup.rs: пошаговая подготовка уже наложена")
         return
 
