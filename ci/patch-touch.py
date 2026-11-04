@@ -380,12 +380,26 @@ pub extern "system" fn Java_dev_moonmc_game_Native_enterNative(
                                     self.touch.active = true;
                                     self.touch_turn(dx, dy, LOOK);
                                 }
-                                // Тап — удар: как левая кнопка мыши, нажали и отпустили.
+                                // Тап по хотбару — выбор слота, как в оригинале
+                                // (world_role → touch_hotbar): в мире идут мимо
+                                // touch_event, поэтому слот считаем по той же полосе.
                                 crate::moon_input::Step::Tap => {
-                                    let mouse = winit::event::MouseButton::Left;
-                                    for pressed in [true, false] {
-                                        if let Err(e) = self.play_mouse(mouse, pressed) {
-                                            log::warn!("MoonMC: {mouse:?}: {e}");
+                                    match crate::moon_input::hotbar_slot(
+                                        at.0,
+                                        at.1,
+                                        batch.width,
+                                        batch.height,
+                                    ) {
+                                        Some(slot) => self.selected = slot,
+                                        // Тап мимо хотбара — удар: как левая кнопка
+                                        // мыши, нажали и отпустили.
+                                        None => {
+                                            let mouse = winit::event::MouseButton::Left;
+                                            for pressed in [true, false] {
+                                                if let Err(e) = self.play_mouse(mouse, pressed) {
+                                                    log::warn!("MoonMC: {mouse:?}: {e}");
+                                                }
+                                            }
                                         }
                                     }
                                 }

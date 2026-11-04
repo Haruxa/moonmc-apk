@@ -260,10 +260,12 @@ jobs:
           fetch build-apk-modded.sh
           fetch patch-game-home.py
           fetch patch-touch.py
+          fetch patch-ime.py
           fetch patch-branding.py
           fetch patch-package.py
           fetch touch_layout.rs
           fetch touch_menu.rs
+          fetch moon_ime.rs
           # все бандлы .hnmod: какие собирать, выбирает лаунчер (input native_mods)
           mkdir -p src/ci/bundles
           gh api "repos/${{ github.repository }}/git/trees/${{ github.sha }}?recursive=1" \
@@ -450,6 +452,18 @@ jobs:
           cp /tmp/android.rs.bak "src-out/$ANDROID"
           # Профили экранного управления: раскладка кнопок из JSON (touch/profiles/*.json).
           ( cd src-out && python3 ../src/ci/patch-touch.py ../src/ci/touch_layout.rs ../src/ci/touch_menu.rs )
+          # IME чата — только если в mixin-дереве реально есть всё, на что он опирается:
+          # кадр тач-слоя (patch-touch выше упал бы без about_to_wait), единственный
+          # `mod chat;` и очередь Typed из Java. Иначе шаг не ломаем — предупреждаем.
+          GAME_OUT=src-out/crates/horizon-client/src/game.rs
+          chat_mods=$(grep -cE '^[[:space:]]*(pub(\([^)]*\))?[[:space:]]+)?mod chat;[[:space:]]*$' "$GAME_OUT" || true)
+          if [ "$chat_mods" = "1" ] \
+             && grep -qF 'self.touch_frame(event_loop);' "$GAME_OUT" \
+             && grep -qF 'fn take_typed' src-out/crates/horizon-client/src/event_loop.rs; then
+            ( cd src-out && python3 ../src/ci/patch-ime.py ../src/ci/moon_ime.rs )
+          else
+            echo "::warning::IME не подключён: mod chat;=$chat_mods, кадр touch_frame или take_typed отсутствует"
+          fi
           grep -n 'mod touch_layout' "src-out/crates/horizon-client/src/game.rs" | head -2 || true
           cp -a src/.local src-out/.local
           echo "== вшитые файлы: $(ls src-out/crates/horizon-client/src/game/ | grep -c official || true)"

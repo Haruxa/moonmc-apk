@@ -213,6 +213,25 @@ pub(super) fn finger_step(x: f32, y: f32, action: i32, id: i32) -> Step {
     }
 }
 
+/// Полоса хотбара в GUI-единицах движка — та же, что у тач-слоя порта
+/// (`world_role`/`touch_hotbar` в game/touch.rs): 182 единицы ширины и 23 высоты
+/// у нижнего края. Панель прижата к низу и стоит по центру: слоты по 20 единиц.
+const HOTBAR_W: f32 = 182.0;
+const HOTBAR_SLOT: f32 = 20.0;
+const HOTBAR_H: f32 = 23.0;
+
+/// Слот хотбара под точкой (GUI-единицы движка), если точка попала в полосу.
+/// Мир в мосте идёт мимо `touch_event`, поэтому выбор слота считается здесь —
+/// по геометрии оригинала, а не по пикселям экрана.
+pub(super) fn hotbar_slot(x: f32, y: f32, w: f32, h: f32) -> Option<usize> {
+    let left = w / 2.0 - HOTBAR_W / 2.0;
+    let dx = x - left;
+    if !(0.0..=HOTBAR_W).contains(&dx) || y < h - HOTBAR_H {
+        return None;
+    }
+    Some((dx / HOTBAR_SLOT).floor().clamp(0.0, 8.0) as usize)
+}
+
 /// GLFW-код (Zalith/InputMap) → клавиша winit.
 pub(super) fn key_of(glfw: i32) -> Option<KeyCode> {
     Some(match glfw {
@@ -330,6 +349,21 @@ mod tests {
     fn pixels_are_not_window_fractions() {
         assert!(!in_window(640.0, 360.0));
         assert!(!in_window(1080.0, 20.0));
+    }
+
+    #[test]
+    fn hotbar_tap_picks_a_slot_by_original_geometry() {
+        let (w, h) = (854.0, 480.0);
+        let left = w / 2.0 - 91.0;
+        // Слоты 0..8 по 20 единиц; тап в середину первого и последнего.
+        assert_eq!(hotbar_slot(left + 10.0, h - 10.0, w, h), Some(0));
+        assert_eq!(hotbar_slot(left + 170.0, h - 10.0, w, h), Some(8));
+        // Края полосы и кламп: левее и правее — мимо хотбара (там камера/удар).
+        assert_eq!(hotbar_slot(left - 1.0, h - 10.0, w, h), None);
+        assert_eq!(hotbar_slot(left + 183.0, h - 10.0, w, h), None);
+        // Выше полосы — не хотбар, даже по центру.
+        assert_eq!(hotbar_slot(left + 10.0, h - 24.0, w, h), None);
+        assert_eq!(hotbar_slot(w / 2.0, h * 0.5, w, h), None);
     }
 
     #[test]

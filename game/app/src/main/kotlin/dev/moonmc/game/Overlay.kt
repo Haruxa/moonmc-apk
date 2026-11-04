@@ -137,6 +137,7 @@ object Overlay {
 
     private fun show(activity: Activity) {
         if (dialog?.isShowing == true) return
+        gameActivity = java.lang.ref.WeakReference(activity)
         // Выключатель слоя: если файл есть, играем без него (крайняя мера при крашах).
         if (gameDir(LAYER_OFF).exists() ||
             File(activity.getExternalFilesDir(null) ?: activity.filesDir, LAYER_OFF).exists()
@@ -189,7 +190,36 @@ object Overlay {
         dialog = d
         step(activity, "dialog ok")
         d.show()
+        // MoonMC: полоса навигации не занимает экран слоя. Она всплывает, когда окно
+        // забирает фокус (панель настроек, диалоги), поэтому прячем и при возврате фокуса.
+        d.window?.let { window ->
+            immersive(window)
+            window.decorView.viewTreeObserver.addOnWindowFocusChangeListener { hasFocus ->
+                if (hasFocus) immersive(window)
+            }
+        }
         step(activity, "shown")
+    }
+
+    /** Системная полоса навигации спрятана (immersive), клавиатуру не трогаем:
+     * IME в списке типов нет, открывает и закрывает её по-прежнему движок. */
+    private fun immersive(window: android.view.Window) {
+        runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                window.setDecorFitsSystemWindows(false)
+                val controller = window.insetsController ?: return@runCatching
+                controller.systemBarsBehavior =
+                    android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(android.view.WindowInsets.Type.navigationBars())
+            } else {
+                // API 26-29: IMMERSIVE_STICKY не даёт полосе всплыть от касания.
+                window.decorView.systemUiVisibility =
+                    android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                    android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                    android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                    android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            }
+        }
     }
 
     /** Клавиатура Android: кнопка IME их раскладки. Открывает её сам движок
@@ -313,6 +343,14 @@ object Overlay {
     @Volatile
     internal var panelEndGap = 0f
 
+    /** Окно активности: в его дереве лежит поверхность, в которую рисует движок. */
+    private var gameActivity: java.lang.ref.WeakReference<Activity>? = null
+
+    /** Прямоугольник поверхности игры в экранных пикселях (null — не нашли). */
+    @Volatile
+    private var surfaceRect: android.graphics.Rect? = null
+    private var surfaceAt = 0L
+
     /** Рамки виджетов слоя (джойстик, кнопки) в пикселях: их касания наши. */
     @Volatile
     internal var widgetBounds: List<androidx.compose.ui.geometry.Rect> = emptyList()
@@ -409,17 +447,79 @@ object Overlay {
         val y = event.getY(index)
         val ourW = screenPx.coerceAtLeast(1f)
         val ourH = screenPy.coerceAtLeast(1f)
-        // Отправляем доли окна (0..1): движок сам переводит их в свою GUI-геометрию,
-        // поэтому вырез, панели и масштаб поверхности больше не сдвигают нажатия.
-        Native.touch(x / ourW, y / ourH, action, event.getPointerId(index))
+        // Экранные координаты пальца: rawX/rawY — это указатель 0, а разница с его
+        // локальной координатой даёт смещение окна слоя на экране. Так палец
+        // переводится в экран и для остальных указателей (событие общее).
+        val originX = event.rawX - event.getX(0)
+        val originY = event.rawY - event.getY(0)
+        val screenX = x + originX
+        val screenY = y + originY
+        val surface = gameSurfaceRect()
+        // Доли поверхности игры, а не своего окна: слой — отдельный Dialog, и его холст
+        // меньше экрана игры (вырез камеры, полоса навигации), из-за чего нажатия
+        // уезжали. Движок сам переводит доли в свою GUI-геометрию.
+        val nx = if (surface != null) (screenX - surface.left) / surface.width() else x / ourW
+        val ny = if (surface != null) (screenY - surface.top) / surface.height() else y / ourH
+        Native.touch(nx, ny, action, event.getPointerId(index))
         if (action == android.view.MotionEvent.ACTION_DOWN) {
             touchReport(
-                x.roundToInt().toString() + "," + y.roundToInt() +
+                "экран " + screenX.roundToInt() + "," + screenY.roundToInt() +
                     " | окно " + ourW.roundToInt() + "x" + ourH.roundToInt() +
-                    " | доли " + String.format("%.4f", x / ourW) +
-                    "," + String.format("%.4f", y / ourH),
+                    " | поверхность " + if (surface == null) "нет" else (
+                        surface.left.toString() + "," + surface.top + "," +
+                            surface.width() + "x" + surface.height()
+                        ) +
+                    " | доли " + String.format("%.4f", nx) +
+                    "," + String.format("%.4f", ny),
             )
         }
+    }
+
+    /**
+     * Прямоугольник поверхности игры в экранных пикселях.
+     *
+     * Слой управления — отдельный Dialog: его окно может быть меньше экрана игры
+     * (вырез камеры, полоса навигации), поэтому доли окна слоя не равны долям
+     * поверхности. Поверхность в NativeActivity создаёт сам фреймворк, поэтому ищем
+     * её в дереве окна активности. Не нашли — null: тогда доли считаются по своему
+     * окну, без выдуманного сдвига.
+     */
+    private fun gameSurfaceRect(): android.graphics.Rect? {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val cached = surfaceRect
+        // Поверхность пересоздаётся при возврате из фона: раз в полсекунды сверяемся.
+        if (cached != null && now - surfaceAt < 500L) return cached
+        val activity = gameActivity?.get()
+        if (activity == null) return cached
+        val found = runCatching {
+            val surface = findSurface(activity.window.decorView) ?: return@runCatching null
+            if (!surface.isShown) return@runCatching null
+            val at = IntArray(2)
+            surface.getLocationOnScreen(at)
+            android.graphics.Rect(at[0], at[1], at[0] + surface.width, at[1] + surface.height)
+        }.getOrNull()
+        surfaceAt = now
+        if (found != null && !found.isEmpty) {
+            surfaceRect = found
+            return found
+        }
+        return cached
+    }
+
+    /** Первая видимая SurfaceView в дереве окна: в неё рисует движок. */
+    private fun findSurface(view: android.view.View): android.view.SurfaceView? {
+        if (view is android.view.SurfaceView &&
+            view.visibility == android.view.View.VISIBLE &&
+            view.width > 0 && view.height > 0
+        ) {
+            return view
+        }
+        if (view is android.view.ViewGroup) {
+            for (i in 0 until view.childCount) {
+                findSurface(view.getChildAt(i))?.let { return it }
+            }
+        }
+        return null
     }
 
     /** Отчёт о координатах тапов: один файл, обрезаем по размеру. */

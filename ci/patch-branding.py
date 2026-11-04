@@ -358,6 +358,18 @@ NEW_RESTART = '''    public void restart() {
             }
 '''
 
+# Панель навигации возвращается, когда окно теряло фокус (диалоги, клавиатура).
+IMMERSIVE_FOCUS = '''    /** MoonMC: после диалогов и клавиатуры полоса навигации всплывает — прячем снова. */
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            MoonImmersive.apply(getWindow());
+        }
+    }
+
+'''
+
 
 def die(msg: str) -> None:
     print(f"patch-branding: {msg}", file=sys.stderr)
@@ -481,6 +493,26 @@ def main() -> int:
             print("экран: вырез камеры проигнорирован (SHORT_EDGES)")
         else:
             print("::warning::HorizonActivity.java: не нашёл onCreate для выреза")
+    # Минимальный immersive: полоса навигации не занимает экран игры. Клавиатуру
+    # (IME) не трогаем — immersive её не скрывает, setKeyboard работает как раньше.
+    if "MoonImmersive" not in code:
+        on_create = "        super.onCreate(state);\n"
+        on_focus_anchor = (
+            "    /** Called by the game when a text field gains or loses focus. */"
+        )
+        if on_create not in code or on_focus_anchor not in code:
+            die("HorizonActivity.java: не нашёл onCreate для immersive")
+        code = code.replace(
+            on_create,
+            on_create
+            + "        // MoonMC: системная полоса навигации не занимает экран.\n"
+            + "        MoonImmersive.apply(getWindow());\n",
+            1,
+        )
+        code = code.replace(on_focus_anchor, IMMERSIVE_FOCUS + on_focus_anchor, 1)
+        pathlib.Path(ACTIVITY).write_text(code, encoding="utf-8")
+        print("экран: полоса навигации спрятана (immersive)")
+
     if "MoonSplash" in code:
         print("экран загрузки: уже пропатчен")
     else:

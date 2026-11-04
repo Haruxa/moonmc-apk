@@ -94,6 +94,10 @@ jobs:
           python3 ci/patch-branding.py
           python3 ci/patch-package.py
           python3 ci/patch-touch.py ci/touch_layout.rs ci/touch_menu.rs || true
+          # IME чата: ставит game/moon_ime.rs и вызов moon_ime_frame() сразу после
+          # touch_frame, поэтому строго после patch-touch и без `|| true` —
+          # несовпадение якорей должно валить сборку, а не молча терять ввод.
+          python3 ci/patch-ime.py ci/moon_ime.rs
           set +e
           bash ci/build-apk-modded.sh > /tmp/build.log 2>&1
           status=$?
