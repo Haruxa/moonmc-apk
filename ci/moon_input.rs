@@ -4,7 +4,7 @@
 //! не доходят. Kotlin кладёт события в очередь (JNI), а игра разбирает её раз в кадр
 //! и применяет как клавиши/кнопки/оси — так же, как это делает тач-слой порта.
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -19,7 +19,8 @@ pub(super) enum Event {
     /// Стик: x, y в -1..1 (x вправо, y вниз).
     Stick(f32, f32),
     /// Касание мимо кнопок слоя (клик меню, поворот камеры):
-    /// физические пиксели x, y; action = MotionEvent.actionMasked; id = палец.
+    /// доли окна x, y в 0..1 от левого верхнего угла; action = MotionEvent.actionMasked;
+    /// id = палец. Пиксели сюда не приходят — их переводит движок в свою GUI-геометрию.
     Touch(f32, f32, i32, i32),
     /// Системная клавиатура Android: показать/скрыть (кнопка IME слоя).
     Keyboard(bool),
@@ -101,7 +102,7 @@ pub(super) fn ready() -> bool {
 /// Жест пальца в мире: камера и тап, без старого тач-слоя порта.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Step {
-    /// Поворот камеры на смещение пальца (физические пиксели).
+    /// Поворот камеры на смещение пальца (GUI-единицы движка, не пиксели экрана).
     Look(f32, f32),
     /// Короткий тап: удар/использовать.
     Tap,
@@ -109,9 +110,29 @@ pub(super) enum Step {
     None,
 }
 
-/// Те же пороги, что у тач-слоя порта (`TAP`/`STILL` в game/touch.rs).
+/// Те же пороги, что у тач-слоя порта (`TAP`/`STILL` в game/touch.rs):
+/// миллисекунды удержания и предел хода в GUI-единицах.
 const TAP: Duration = Duration::from_millis(250);
 const STILL: f32 = 6.0;
+
+/// Протокол касаний один на слой и движок: слой (`Overlay.kt`) шлёт доли окна
+/// 0..1 от левого верхнего угла. Пиксели (сотни) значат, что слой другой сборки —
+/// такое касание не применяем, иначе нажатия молча уходили бы в угол экрана.
+/// Запас по краям: палец может уйти за границу окна на пару точек.
+pub(super) fn in_window(x: f32, y: f32) -> bool {
+    (-0.5..=1.5).contains(&x) && (-0.5..=1.5).contains(&y)
+}
+
+/// Рассинхрон протокола видно в logs/latest.log: пишем один раз за запуск.
+pub(super) fn warn_touch_units(x: f32, y: f32) {
+    static WARNED: OnceLock<AtomicBool> = OnceLock::new();
+    if !WARNED.get_or_init(|| AtomicBool::new(false)).swap(true, Ordering::Relaxed) {
+        log::warn!(
+            "MoonMC: касание ({x:.0}, {y:.0}) не в долях окна — слой и движок \
+             разошлись по протоколу, касание пропущено"
+        );
+    }
+}
 
 struct Finger {
     id: i32,
@@ -294,6 +315,21 @@ mod tests {
         assert_eq!(finger_step(10.0, 10.0, 0, 0), Step::None);
         assert_eq!(finger_step(10.0, 10.0, 3, 0), Step::None);
         assert_eq!(finger_step(10.0, 10.0, 1, 0), Step::None);
+    }
+
+    #[test]
+    fn window_fractions_are_the_layer_protocol() {
+        assert!(in_window(0.0, 0.0));
+        assert!(in_window(1.0, 1.0));
+        assert!(in_window(0.25, 0.75));
+        // Палец ушёл за край окна — это всё ещё доли.
+        assert!(in_window(-0.02, 1.03));
+    }
+
+    #[test]
+    fn pixels_are_not_window_fractions() {
+        assert!(!in_window(640.0, 360.0));
+        assert!(!in_window(1080.0, 20.0));
     }
 
     #[test]

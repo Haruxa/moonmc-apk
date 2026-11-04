@@ -98,17 +98,84 @@ NEW_KEYBOARD = '''            if (splash != null) {
             // MoonMC: окно слоя не трогаем — по видимости IME его прячет Kotlin-часть.
             OverlayBridge.gameKeyboard(show);
             if (show) {
+                // input.reset() отменяет отложенное закрытие IME: поле открыли заново.
                 input.reset();'''
 
-# MoonMC: одно соединение на всё время работы. Новое на каждый restartInput давало
-# клавиатуре вторую «копию» набранного, и удалённые символы возвращались при наборе.
-OLD_CONNECTION = '''            connection = new Connection(this);
-            return connection;'''
+OLD_HIDE_BRANCH = '''            } else {
+                imm.hideSoftInputFromWindow(input.getWindowToken(), 0);
+                input.clearFocus();
+                input.setFocusable(false);
+            }'''
 
-NEW_CONNECTION = '''            if (connection == null) {
-                connection = new Connection(this);
+NEW_HIDE_BRANCH = '''            } else {
+                // MoonMC: игра сама закрыла чат — отложенное закрытие уже не нужно.
+                input.cancelHide();
+                imm.hideSoftInputFromWindow(input.getWindowToken(), 0);
+                input.clearFocus();
+                input.setFocusable(false);
+            }'''
+
+# Отложенное закрытие IME живёт в самом поле: так его можно отменить, если поле
+# открыли заново (reset) или игра сама закрыла чат.
+OLD_RESET = '''        void reset() {
+            if (connection != null) {
+                connection.reset();
             }
-            return connection;'''
+        }'''
+
+NEW_RESET = '''        /** MoonMC: задержка перед закрытием IME — Enter должен дойти до игры. */
+        private static final long HIDE_DELAY = 300;
+        private final android.os.Handler hideHandler =
+            new android.os.Handler(android.os.Looper.getMainLooper());
+        /** MoonMC: закрытие IME отменяемое: поле могут открыть заново за эти 300 мс. */
+        private final Runnable hideRunnable = new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    hideNow();
+                } catch (Throwable error) {
+                    android.util.Log.w("MoonIME", "hide runnable: " + error);
+                }
+            }
+        };
+
+        void reset() {
+            cancelHide();
+            if (connection != null) {
+                connection.reset();
+            }
+        }
+
+        /** MoonMC: отложить закрытие IME; повторный вызов переносит срок. */
+        void hideLater() {
+            hideHandler.removeCallbacks(hideRunnable);
+            hideHandler.postDelayed(hideRunnable, HIDE_DELAY);
+        }
+
+        /** MoonMC: отменить отложенное закрытие (поле открыли заново). */
+        void cancelHide() {
+            hideHandler.removeCallbacks(hideRunnable);
+        }
+
+        /** MoonMC: закрыть IME, если поле всё ещё на экране. Фокус у другого ввода
+         *  (диалог имени, поиск) или у игры — не трогаем: там своя клавиатура. */
+        private void hideNow() {
+            if (!isAttachedToWindow() || !hasFocus()) {
+                return;
+            }
+            try {
+                InputMethodManager imm = (InputMethodManager) getContext()
+                    .getSystemService(Context.INPUT_METHOD_SERVICE);
+                imm.hideSoftInputFromWindow(getWindowToken(), 0);
+            } catch (Throwable error) {
+                android.util.Log.w("MoonIME", "hide: " + error);
+            }
+            try {
+                OverlayBridge.gameKeyboard(false);
+            } catch (Throwable error) {
+                android.util.Log.w("MoonIME", "hide overlay: " + error);
+            }
+        }'''
 
 # Кнопка в самой клавиатуре — «отправить», а не безликая «готово».
 OLD_OPTIONS = '''            info.imeOptions = EditorInfo.IME_ACTION_DONE;'''
@@ -146,36 +213,56 @@ NEW_EDITOR_ACTION = '''        public boolean performEditorAction(int action) {
             return true;
         }'''
 
-OLD_REPORT = '''        private void report() {'''
+# Backspace: Gboard, Samsung и другие клавиатуры на API 24+ зовут
+# deleteSurroundingTextInCodePoints, а не deleteSurroundingText. База правит только свой
+# буфер (getEditable()) и возвращает true — без sync() игра об удалении не узнавала.
+# Проверено по AOSP BaseInputConnection: оба метода работают с getEditable() и не зовут
+# никаких колбэков сами.
+OLD_DELETE_CODEPOINTS = '''        @Override
+        public boolean sendKeyEvent(KeyEvent event) {'''
 
-NEW_REPORT = '''        /** MoonMC: закрыть клавиатуру чуть позже — Enter должен дойти до игры. */
+NEW_DELETE_CODEPOINTS = '''        @Override
+        public boolean deleteSurroundingTextInCodePoints(int before, int after) {
+            if (before > 0 && getEditable().length() == 0) {
+                for (int i = 0; i < before; i++) {
+                    nativeKey(KeyEvent.KEYCODE_DEL);
+                }
+                return true;
+            }
+            boolean done = super.deleteSurroundingTextInCodePoints(before, after);
+            sync();
+            return done;
+        }
+
+        @Override
+        public boolean sendKeyEvent(KeyEvent event) {'''
+
+# Вставляем перед extracted(): у него нет javadoc, а у report() он идёт вплотную к
+# сигнатуре — иначе описание «The keyboard's view of the editor» осталось бы висеть
+# над hideLater, а сам report() оказался бы без своего комментария.
+OLD_REPORT = '''        private ExtractedText extracted() {'''
+
+NEW_REPORT = '''        /** MoonMC: закрыть клавиатуру чуть позже — Enter должен дойти до игры.
+         *  Отсчёт живёт в поле ввода (TextView), поэтому повторное открытие чата
+         *  отменяет его, а фокус у ввода не отбираем: игра сама зовёт
+         *  setKeyboard(false), когда чат закрыт. */
         private void hideLater() {
-            try {
-                final android.view.View target = view;
-                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-                    try {
-                        InputMethodManager imm = (InputMethodManager) target.getContext()
-                            .getSystemService(Context.INPUT_METHOD_SERVICE);
-                        if (imm.isActive(target)) {
-                            imm.hideSoftInputFromWindow(target.getWindowToken(), 0);
-                        }
-                        target.clearFocus();
-                    } catch (Throwable error) {
-                        android.util.Log.w("MoonIME", "hide: " + error);
-                    }
-                    OverlayBridge.gameKeyboard(false);
-                }, 300);
-            } catch (Throwable error) {
-                android.util.Log.w("MoonIME", "hideLater: " + error);
+            if (view instanceof TextView) {
+                ((TextView) view).hideLater();
             }
         }
 
-        private void report() {'''
+        private ExtractedText extracted() {'''
 
-# MoonMC: своё соединение с клавиатурой. Раньше весь текст шёл через getEditable(),
-# а у обычного View его нет: sync() падал до нажатия Enter, поэтому кнопка
-# «отправить» ничего не делала, а буквы множились. Теперь источник истины —
-# собственный буфер, а getEditable() не используется вовсе.
+# Ввод не трогаем: в нарезке источник истины — Editable самого BaseInputConnection.
+# Проверено по AOSP (frameworks/base BaseInputConnection.java): getEditable() для
+# обычного View никогда не null — это внутренний «фальшивый» Editable, а
+# sendCurrentText() при fullEditor=true (порт зовёт super(view, true)) сразу выходит,
+# поэтому буфер не очищается и sync() видит набранное. Свой буфер, отказ от
+# getEditable() и переиспользование одного Connection ломали именно эту схему.
+# Патчим только то, чего в нарезке нет: backspace через
+# deleteSurroundingTextInCodePoints, sync() перед Enter, действие SEND, отложенное
+# отменяемое закрытие IME.
 
 OVERLAY = '''        // MoonMC: любая необработанная ошибка пишется рядом с игрой — иначе краш
         // на старте нечем диагностировать (лог Rust в этот момент ещё пуст).
@@ -402,7 +489,8 @@ def main() -> int:
             (OLD_DISMISS, NEW_DISMISS, "showChoice"),
             (OLD_RESTART, NEW_RESTART, "restart"),
             (OLD_KEYBOARD, NEW_KEYBOARD, "setKeyboard"),
-            (OLD_CONNECTION, NEW_CONNECTION, "onCreateInputConnection"),
+            (OLD_HIDE_BRANCH, NEW_HIDE_BRANCH, "setKeyboard(hide)"),
+            (OLD_RESET, NEW_RESET, "TextView.reset"),
             (OLD_OPTIONS, NEW_OPTIONS, "imeOptions"),
             (OLD_REPORT, NEW_REPORT, "hideLater"),
             (OLD_ENTER_KEY, NEW_ENTER_KEY, "sendKeyEvent(ENTER)"),
@@ -419,9 +507,11 @@ def main() -> int:
         pathlib.Path(ACTIVITY).write_text(code)
         print("экран загрузки: AlertDialog MargyMC -> MoonSplash MoonMC")
 
-    # 5. Клавиатура: отправка с отложенным закрытием (ввод — как в нарезке).
+    # 5. Клавиатура: отправка с отложенным и отменяемым закрытием (ввод — как в нарезке).
     if "hideLater" not in code:
         for old, new, what in (
+            (OLD_HIDE_BRANCH, NEW_HIDE_BRANCH, "setKeyboard(hide)"),
+            (OLD_RESET, NEW_RESET, "TextView.reset"),
             (OLD_REPORT, NEW_REPORT, "hideLater"),
             (OLD_ENTER_KEY, NEW_ENTER_KEY, "sendKeyEvent(ENTER)"),
             (OLD_EDITOR_ACTION, NEW_EDITOR_ACTION, "performEditorAction"),
@@ -431,6 +521,15 @@ def main() -> int:
             code = code.replace(old, new, 1)
         pathlib.Path(ACTIVITY).write_text(code, encoding="utf-8")
         print("экран: отправка синхронизирует текст и закрывает IME с задержкой")
+
+    # 6. Backspace: клавиатуры на API 24+ шлют deleteSurroundingTextInCodePoints,
+    # который в нарезке не переопределён — удаление оставалось в буфере клавиатуры.
+    if "deleteSurroundingTextInCodePoints" not in code:
+        if OLD_DELETE_CODEPOINTS not in code:
+            die("HorizonActivity.java: не нашёл sendKeyEvent для backspace")
+        code = code.replace(OLD_DELETE_CODEPOINTS, NEW_DELETE_CODEPOINTS, 1)
+        pathlib.Path(ACTIVITY).write_text(code, encoding="utf-8")
+        print("экран: backspace идёт через deleteSurroundingTextInCodePoints")
     if not label or label.group(1) != LABEL:
         die("не удалось выставить android:label")
     return 0

@@ -392,26 +392,26 @@ fn report_jre(home: &Path, jre: &Path) {
     use std::os::unix::fs::PermissionsExt;
     let java = jre.join("bin/java");
     let mut report = String::new();
-    report.push_str(&format!("java = {}\n", java.display()));
+    report.push_str(&format!("java = {}\\n", java.display()));
     match std::fs::symlink_metadata(&java) {
         Ok(meta) => report.push_str(&format!(
-            "symlink_metadata: file={} dir={} mode={:o} len={}\n",
+            "symlink_metadata: file={} dir={} mode={:o} len={}\\n",
             meta.file_type().is_file(),
             meta.file_type().is_dir(),
             meta.permissions().mode(),
             meta.len()
         )),
-        Err(e) => report.push_str(&format!("symlink_metadata: error {e}\n")),
+        Err(e) => report.push_str(&format!("symlink_metadata: error {e}\\n")),
     }
-    report.push_str(&format!("exists = {}\n", java.exists()));
-    report.push_str(&format!("read_link = {:?}\n", std::fs::read_link(&java)));
+    report.push_str(&format!("exists = {}\\n", java.exists()));
+    report.push_str(&format!("read_link = {:?}\\n", std::fs::read_link(&java)));
     match std::process::Command::new(&java).arg("-version").output() {
         Ok(out) => report.push_str(&format!(
-            "run: code {:?}, stderr: {}\n",
+            "run: code {:?}, stderr: {}\\n",
             out.status.code(),
             String::from_utf8_lossy(&out.stderr).lines().next().unwrap_or("")
         )),
-        Err(e) => report.push_str(&format!("run: error {e} (kind {:?})\n", e.kind())),
+        Err(e) => report.push_str(&format!("run: error {e} (kind {:?})\\n", e.kind())),
     }
     let public = std::path::Path::new("/sdcard/MoonMC/horizon");
     if std::fs::create_dir_all(public).is_ok() {
@@ -484,7 +484,9 @@ pub fn prepared(home: &Path) -> bool {
         .unwrap_or_else(|| home.join("jre"));
     let resources = home.join(RESOURCES);
     // MoonMC: быстрая проверка — только имена и права, без пересчёта хешей.
-    let java_ok = moon_java_ready(&home.join("jre")) || moon_java_ready(&jre);
+    // java проверяем в той же папке, из которой берёт его setup (HORIZON_PRIVATE_HOME
+    // ставит android.rs): старый /sdcard/jre не должен выдавать себя за рантайм.
+    let java_ok = moon_java_ready(&jre);
     let ready = moon_resources_ready(&resources);
     moon_setup_log(
         home,
@@ -498,12 +500,15 @@ pub fn prepared(home: &Path) -> bool {
     java_ok && ready
 }
 
-/// Исполняемый ли `bin/java`: тот же признак, что у пересборки JRE.
+/// Исполняемый ли `bin/java` в уже распакованном JRE: `release` порт пишет при
+/// распаковке (android_setup: `jre.join("release").is_file()`), а недописанная
+/// распаковка может оставить `bin/java` без него.
 fn moon_java_ready(jre: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(jre.join("bin/java"))
-        .map(|m| m.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
+    jre.join("release").is_file()
+        && std::fs::metadata(jre.join("bin/java"))
+            .map(|m| m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
 }
 
 /// Маркер готовности: пишется после успешной подготовки ресурсов.
@@ -511,29 +516,22 @@ fn moon_marker(resources: &Path) -> PathBuf {
     resources.join(".moonmc-ready")
 }
 
-/// Какого файла не хватает из тех, что загрузчик ресурсов открывает первыми.
+/// Чего не хватает ресурсам: единственное подтверждённое имя — файл, по которому
+/// порт сам считает ресурсы готовыми (`prepared` в android_setup.rs и
+/// `RESOURCES`/`.local/horizon-client/26.3`). Других обязательных имён не выдумываем.
 fn moon_probe(resources: &Path) -> Option<&'static str> {
-    for name in ["horizon-resources.json", "facts.json", "block-tags.json"] {
-        if !resources.join(name).is_file() {
-            return Some(name);
-        }
+    if resources.join("horizon-resources.json").is_file() {
+        None
+    } else {
+        Some("horizon-resources.json")
     }
-    None
 }
 
-/// Ресурсы готовы: маркер или все файлы загрузчика (тогда маркер сразу пишем).
+/// Ресурсы готовы: файл подготовки на месте И маркер, который ставится только после
+/// успешного возврата `prepare`. Незавершённая сборка маркера не имеет, поэтому
+/// готовой не считается.
 fn moon_resources_ready(resources: &Path) -> bool {
-    if !resources.join("horizon-resources.json").is_file() {
-        return false;
-    }
-    if moon_marker(resources).is_file() {
-        return true;
-    }
-    if moon_probe(resources).is_some() {
-        return false;
-    }
-    let _ = std::fs::write(moon_marker(resources), "ready");
-    true
+    moon_probe(resources).is_none() && moon_marker(resources).is_file()
 }
 
 /// Строка диагностики подготовки: в /sdcard рядом с игрой, иначе в приватную папку.
@@ -552,13 +550,32 @@ fn moon_setup_log(home: &Path, text: &str) {
     }
 }
 
-/// Экспортёры распакованы: по файлу, который нужен самой подготовке.
+/// Каталог экспортёров: их исходники кладутся в prepare.zip рядом с research-lock.json.
+fn moon_parity_dir(home: &Path) -> PathBuf {
+    home.join("mods/horizon/src/test/java/dev/horizonlab/parity")
+}
+
+/// Маркер завершённой распаковки prepare.zip: пишется только после успешного extract.
+fn moon_exporters_marker(home: &Path) -> PathBuf {
+    home.join(".moonmc-exporters")
+}
+
+/// Экспортёры распакованы: маркер завершённой распаковки, `research-lock.json` из
+/// корня prepare.zip и хотя бы один файл parity — оба пути подтверждены упаковкой
+/// (ci/build-apk-modded.sh кладёт в архив ровно их и exporters/**). Имя файла parity
+/// не проверяем: его нет в этих исходниках, а недописанный архив маркера не имеет.
 fn moon_exporters_ready(home: &Path) -> bool {
-    home.join("mods/horizon/src/test/java/dev/horizonlab/parity/VanillaHeightmapOracle.java")
-        .is_file()
+    moon_exporters_marker(home).is_file()
+        && home.join("research-lock.json").is_file()
+        && std::fs::read_dir(moon_parity_dir(home))
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false)
 }
 
 /// Чего не хватает для игры: пусто — можно стартовать.
+/// Звуки сюда не входят: они опциональны (`sounds()` при ошибке оставляет игру без
+/// звука), и требование sounds.json в быстром пути возвращало экран подготовки на
+/// каждом запуске. Готовность самих ресурсов проверяет маркер подготовки.
 fn moon_missing(home: &Path) -> Vec<&'static str> {
     let java = std::env::var_os("HORIZON_PRIVATE_HOME")
         .map(std::path::PathBuf::from)
@@ -566,7 +583,8 @@ fn moon_missing(home: &Path) -> Vec<&'static str> {
         .unwrap_or_else(|| home.join("jre"));
     let resources = home.join(RESOURCES);
     let mut missing = Vec::new();
-    if !moon_java_ready(&java) && !moon_java_ready(&home.join("jre")) {
+    // Только реальный путь java (тот же, что у setup): чужой /sdcard/jre не считается.
+    if !moon_java_ready(&java) {
         missing.push("java");
     }
     if !moon_exporters_ready(home) {
@@ -575,10 +593,80 @@ fn moon_missing(home: &Path) -> Vec<&'static str> {
     if !moon_resources_ready(&resources) {
         missing.push("resources");
     }
-    if !resources.join("assets/minecraft/sounds.json").is_file() {
-        missing.push("sounds");
-    }
     missing
+}
+
+/// Фактическая папка игры: внешняя, если права уже выданы и в неё можно писать
+/// (та же проба, что в android.rs), иначе переданная приватная.
+fn moon_actual_home(home: &Path) -> PathBuf {
+    let external = PathBuf::from("/sdcard/MoonMC/horizon");
+    let usable = std::fs::create_dir_all(&external).is_ok() && {
+        let probe = external.join(".horizon-write-probe");
+        let ok = std::fs::write(&probe, b"probe").is_ok();
+        let _ = std::fs::remove_file(&probe);
+        ok
+    };
+    if usable { external } else { home.to_path_buf() }
+}
+
+/// Папка игры после выдачи прав — один выбор на весь запуск: android.rs выбрал её
+/// до запроса доступа и уже выставил HORIZON_HOME и текущий каталог, поэтому при
+/// смене папки переносим туда и их. Иначе игра читала бы ресурсы из приватной
+/// папки, а подготовка каждый запуск начиналась бы заново, уже на /sdcard.
+#[allow(unsafe_code)]
+fn moon_use_home(home: &Path) -> PathBuf {
+    let actual = moon_actual_home(home);
+    if actual != home {
+        // SAFETY: no other thread reads the environment or the current folder during setup.
+        unsafe { std::env::set_var("HORIZON_HOME", &actual) };
+        let _ = std::env::set_current_dir(&actual);
+    }
+    actual
+}
+
+/// Отчёт о реальных путях проверки: те же папки, из которых читает загрузчик
+/// ресурсов (Assets::load → <root>/.local/horizon-client/<версия>) и java из
+/// HORIZON_PRIVATE_HOME. Без него в moonmc-setup.txt было видно только «нет ресурсов».
+fn moon_report(home: &Path) -> String {
+    let java_home = std::env::var_os("HORIZON_PRIVATE_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| home.to_path_buf());
+    let jre = java_home.join("jre");
+    let resources = home.join(RESOURCES);
+    let files = [
+        ("java", jre.join("bin/java")),
+        ("jre/release", jre.join("release")),
+        ("resources", resources.clone()),
+        (
+            "horizon-resources.json",
+            resources.join("horizon-resources.json"),
+        ),
+        (".moonmc-ready", resources.join(".moonmc-ready")),
+        (
+            "assets/minecraft/sounds.json",
+            resources.join("assets/minecraft/sounds.json"),
+        ),
+        // пути заданы
+        (
+            "exporters/parity",
+            moon_parity_dir(home),
+        ),
+        ("research-lock.json", home.join("research-lock.json")),
+        (".moonmc-exporters", moon_exporters_marker(home)),
+    ];
+    let mut text = format!(
+        "пути: home={} java_home={}\\n",
+        home.display(),
+        java_home.display()
+    );
+    for (name, path) in files {
+        text.push_str(&format!(
+            "  {name}: {} {}\\n",
+            if path.exists() { "есть" } else { "НЕТ" },
+            path.display()
+        ));
+    }
+    text
 }"""
     if old not in text:
         print("::warning::android_setup.rs: не нашёл prepared(), проверку готовности пропускаю")
@@ -609,6 +697,9 @@ def patch_setup_incremental() -> None:
         let mut zip =
             zip::ZipArchive::new(std::io::Cursor::new(kit)).map_err(|e| e.to_string())?;
         zip.extract(home).map_err(|e| e.to_string())?;
+        // MoonMC: маркер — только после успешного extract: недописанный архив готовым
+        // не считается.
+        let _ = std::fs::write(moon_exporters_marker(home), "ready");
     }"""
     if exporters_old not in text:
         print("::warning::android_setup.rs: не нашёл распаковку экспортёров")
@@ -667,9 +758,18 @@ def patch_setup_incremental() -> None:
             &format!("доступ после запроса: {}", crate::all_files_access()),
         );
     }
-    // MoonMC: вс‘ уже на месте — экран подготовки не нужен, сразу в игру.
-    let missing = moon_missing(home);
-    moon_setup_log(home, &format!("пропуск подготовки: не хватает {missing:?}"));
+    // MoonMC: android.rs выбирает папку игры до запроса прав — после выдачи
+    // переключаемся на фактическую и переносим туда HORIZON_HOME и cwd.
+    let home = moon_use_home(home);
+    // MoonMC: всё уже на месте — экран подготовки не нужен, сразу в игру.
+    let missing = moon_missing(&home);
+    moon_setup_log(
+        &home,
+        &format!(
+            "{}\\nпропуск подготовки: не хватает {missing:?}",
+            moon_report(&home)
+        ),
+    );
     if missing.is_empty() {
         restart();
         return;

@@ -25,6 +25,43 @@ STARTUP = CLIENT / "game/startup_menu.rs"
 
 ERRORS: list[str] = []
 
+# Протокол координат касаний один на обе стороны: слой (`game/.../Overlay.kt`)
+# шлёт доли окна 0..1, а разбор очереди переводит их в GUI-геометрию движка.
+# Метка в тексте нужна повторному прогону: прежний (пиксельный) разбор не должен
+# остаться молча — его снимаем целиком и ставим текущий.
+TOUCH_PROTOCOL = "MOON_TOUCH_WINDOW_V1"
+DRAIN_HEAD = "        for event in crate::moon_input::drain() {"
+DRAIN_TAIL = """        crate::moon_input::set_keyboard_up(self.touch.keyboard);
+        crate::moon_input::set_account(&self.options.player_name());
+        crate::moon_input::set_in_menu(self.touch_in_menu());"""
+
+
+def strip_drain(text: str) -> tuple[str, str]:
+    """Снимает наш разбор очереди, если он уже стоит в дереве.
+
+    fresh  — разбора не было: ставит текущая версия;
+    upgrade — был прежний разбор: сняли, текущая версия поставит свой;
+    keep   — уже наш протокол долей: ничего не трогаем (побайтная идемпотентность);
+    broken — разбор не опознан однозначно: явная ошибка, дерево не меняем.
+    """
+    if TOUCH_PROTOCOL in text:
+        return text, "keep"
+    if DRAIN_HEAD not in text:
+        return text, "fresh"
+    if text.count(DRAIN_HEAD) != 1 or text.count(DRAIN_TAIL) != 1:
+        ERRORS.append(
+            "touch.rs: разбор моста не опознан однозначно (нужен один drain и один хвост)"
+        )
+        return text, "broken"
+    start = text.index(DRAIN_HEAD)
+    end = text.index(DRAIN_TAIL) + len(DRAIN_TAIL)
+    if end < start:
+        ERRORS.append("touch.rs: хвост разбора выше его начала")
+        return text, "broken"
+    # Ровно один перевод строки между якорем и остатком: повторная вставка
+    # даёт тот же текст, что и на свежем дереве (побайтная идемпотентность).
+    return text[:start].rstrip("\n") + "\n" + text[end:].lstrip("\n"), "upgrade"
+
 
 def replace(text: str, old: str, new: str, what: str) -> str:
     # Не выходим на первом промахе: за один прогон CI видно все несовпадения.
@@ -246,14 +283,21 @@ pub extern "system" fn Java_dev_moonmc_game_Native_enterNative(
                     ROOT.write_text(root)
                 print("android.rs: JNI-функции моста добавлены")
 
-    # разбор очереди в кадре тач-слоя
+    # разбор очереди в кадре тач-слоя: протокол координат общий со слоем
     text = TOUCH.read_text()
+    text, drain_state = strip_drain(text)
+    if drain_state == "upgrade":
+        TOUCH.write_text(text)
+        print("touch.rs: прежний разбор моста снят — ставлю протокол долей окна")
+    elif drain_state == "keep":
+        print("touch.rs: разбор моста уже по протоколу долей окна")
     if "moon_input::drain()" not in text:
         anchor = "    pub(super) fn touch_frame(&mut self, event_loop: &ActiveEventLoop) {"
         if anchor in text:
             body = anchor + """
 
         for event in crate::moon_input::drain() {
+            // {TOUCH_PROTOCOL}: касания из слоя — доли окна 0..1, не пиксели экрана.
             use crate::moon_input::Event;
             match event {
                 // Клавиша идёт тем же путём, что и настоящая: debug-клавиши (F3 и др.)
@@ -318,7 +362,13 @@ pub extern "system" fn Java_dev_moonmc_game_Native_enterNative(
         // движка — в ней он и рисует меню, и ищет попадания. Так расхождение
         // окон, вырез и масштаб поверхности не сдвигают нажатие.
         Event::Touch(nx, ny, action, id) => {
-                    if let Some(batch) = self.gui_scale() {
+                    // Слой другой сборки слал пиксели: такое касание не применяем,
+                    // но и не молчим — первый случай попадёт в logs/latest.log.
+                    if !crate::moon_input::in_window(nx, ny) {
+                        crate::moon_input::warn_touch_units(nx, ny);
+                    } else if let Some(batch) = self.gui_scale() {
+                        // Палец может уйти за край окна: долю жмём к 0..1.
+                        let (nx, ny) = (nx.clamp(0.0, 1.0), ny.clamp(0.0, 1.0));
                         let at = (nx * batch.width as f32, ny * batch.height as f32);
                         // Меню — по состояниию самого движка (титул/экраны/диалоги),
                         // а не по захвату курсора: фокус окна на Android не гарантирован.
@@ -389,9 +439,27 @@ pub extern "system" fn Java_dev_moonmc_game_Native_enterNative(
         crate::moon_input::set_keyboard_up(self.touch.keyboard);
         crate::moon_input::set_account(&self.options.player_name());
         crate::moon_input::set_in_menu(self.touch_in_menu());"""
+            body = body.replace("{TOUCH_PROTOCOL}", TOUCH_PROTOCOL)
             text = text.replace(anchor, body, 1)
             TOUCH.write_text(text)
-            print("touch.rs: очередь моста разбирается в кадре")
+            print("touch.rs: очередь моста разбирается в кадре (доли окна 0..1)")
+
+    # Итог проверяем по тексту: повторный прогон и чужой разбор не должны оставить
+    # касания в пикселях молча. Контракт пина — `location` в физических пикселях:
+    # touch_event сам делит их на batch.scale, поэтому наш перевод долей умножает
+    # GUI-координаты на scale. Другой контракт — явная ошибка, а не сдвиг нажатий.
+    text = TOUCH.read_text()
+    if text.count(TOUCH_PROTOCOL) != 1:
+        ERRORS.append("touch.rs: разбор моста без метки протокола долей (метка не одна)")
+    if "t.location.x as f32 / batch.scale," not in text:
+        ERRORS.append(
+            "touch.rs: контракт касаний пина другой (location уже не пиксели) — "
+            "перевод долей окна в GUI-геометрию нужно пересчитать"
+        )
+    if "Event::Touch(nx, ny" not in text:
+        ERRORS.append("touch.rs: касание слоя не разбирается как доли окна")
+    if "Event::Touch(x, y" in text:
+        ERRORS.append("touch.rs: остался прежний разбор касаний в пикселях")
 
     # Диагностика ввода: в логе видно, что именно дошло от клавиатуры до движка.
     # Без этого жалобы на набор в чате нечем проверить.
