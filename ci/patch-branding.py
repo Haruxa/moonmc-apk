@@ -127,6 +127,8 @@ NEW_RESET = '''        /** MoonMC: задержка перед закрытие�
         private static final long HIDE_DELAY = 300;
         private final android.os.Handler hideHandler =
             new android.os.Handler(android.os.Looper.getMainLooper());
+        /** MoonMC: поколение закрытия: reset/повторное открытие гасит старый вызов. */
+        private int hideToken;
         /** MoonMC: закрытие IME отменяемое: поле могут открыть заново за эти 300 мс. */
         private final Runnable hideRunnable = new Runnable() {
             @Override
@@ -148,27 +150,34 @@ NEW_RESET = '''        /** MoonMC: задержка перед закрытие�
 
         /** MoonMC: отложить закрытие IME; повторный вызов переносит срок. */
         void hideLater() {
-            hideHandler.removeCallbacks(hideRunnable);
-            hideHandler.postDelayed(hideRunnable, HIDE_DELAY);
+            cancelHide();
+            final int token = ++hideToken;
+            hideHandler.postDelayed(() -> {
+                // Поле открыли заново или закрыли сами — этот срок уже не наш.
+                if (token == hideToken) {
+                    hideRunnable.run();
+                }
+            }, HIDE_DELAY);
         }
 
         /** MoonMC: отменить отложенное закрытие (поле открыли заново). */
         void cancelHide() {
-            hideHandler.removeCallbacks(hideRunnable);
+            hideToken++;
+            hideHandler.removeCallbacksAndMessages(null);
         }
 
         /** MoonMC: закрыть IME, если поле всё ещё на экране. Фокус у другого ввода
-         *  (диалог имени, поиск) или у игры — не трогаем: там своя клавиатура. */
+         *  (диалог имени, поиск) или у игры — IME не трогаем, но слой возвращаем
+         *  всегда: иначе HUD оставался скрытым после отправки сообщения. */
         private void hideNow() {
-            if (!isAttachedToWindow() || !hasFocus()) {
-                return;
-            }
-            try {
-                InputMethodManager imm = (InputMethodManager) getContext()
-                    .getSystemService(Context.INPUT_METHOD_SERVICE);
-                imm.hideSoftInputFromWindow(getWindowToken(), 0);
-            } catch (Throwable error) {
-                android.util.Log.w("MoonIME", "hide: " + error);
+            if (isAttachedToWindow() && hasFocus()) {
+                try {
+                    InputMethodManager imm = (InputMethodManager) getContext()
+                        .getSystemService(Context.INPUT_METHOD_SERVICE);
+                    imm.hideSoftInputFromWindow(getWindowToken(), 0);
+                } catch (Throwable error) {
+                    android.util.Log.w("MoonIME", "hide: " + error);
+                }
             }
             try {
                 OverlayBridge.gameKeyboard(false);
@@ -253,6 +262,61 @@ NEW_REPORT = '''        /** MoonMC: закрыть клавиатуру чуть
         }
 
         private ExtractedText extracted() {'''
+
+# Визуальные дубли: полный снимок текста со словом, которое клавиатура рисует сама
+# (extract/fullscreen-редактор в горизонтали), заставлял её рисовать это слово дважды.
+# Во время набора шлём только выделение, полный текст — когда составного слова уже нет.
+OLD_REPORT_BODY = '''        /** The keyboard's view of the editor: the selection and the word being composed as
+         *  they are, so its own editor shows the text once (not "gag" for "ga"). */
+        private void report() {
+            InputMethodManager imm = (InputMethodManager) view.getContext()
+                .getSystemService(Context.INPUT_METHOD_SERVICE);
+            android.text.Editable editable = getEditable();
+            int start = android.text.Selection.getSelectionStart(editable);
+            int end = android.text.Selection.getSelectionEnd(editable);
+            imm.updateSelection(view, start, end, getComposingSpanStart(editable),
+                getComposingSpanEnd(editable));
+            if (monitor >= 0) {
+                imm.updateExtractedText(view, monitor, extracted());
+            }
+        }'''
+
+NEW_REPORT_BODY = '''        /** MoonMC: что уже отдано клавиатуре: одинаковое состояние не шлём дважды. */
+        private int lastStart = -1;
+        private int lastEnd = -1;
+        private int lastComposingStart = -1;
+        private int lastComposingEnd = -1;
+        private String lastExtracted;
+
+        /** The keyboard's view of the editor: the selection and the word being composed as
+         *  they are, so its own editor shows the text once (not "gag" for "ga"). */
+        private void report() {
+            InputMethodManager imm = (InputMethodManager) view.getContext()
+                .getSystemService(Context.INPUT_METHOD_SERVICE);
+            android.text.Editable editable = getEditable();
+            int start = android.text.Selection.getSelectionStart(editable);
+            int end = android.text.Selection.getSelectionEnd(editable);
+            int composingStart = getComposingSpanStart(editable);
+            int composingEnd = getComposingSpanEnd(editable);
+            // Слово в наборе клавиатура уже показывает сама: полный снимок с ним же
+            // заставлял её full-screen-редактор рисовать слово второй раз.
+            boolean composing = composingStart >= 0 && composingEnd > composingStart;
+            if (start != lastStart || end != lastEnd
+                || composingStart != lastComposingStart || composingEnd != lastComposingEnd) {
+                lastStart = start;
+                lastEnd = end;
+                lastComposingStart = composingStart;
+                lastComposingEnd = composingEnd;
+                imm.updateSelection(view, start, end, composingStart, composingEnd);
+            }
+            if (monitor >= 0 && !composing) {
+                String now = editable.toString();
+                if (!now.equals(lastExtracted)) {
+                    lastExtracted = now;
+                    imm.updateExtractedText(view, monitor, extracted());
+                }
+            }
+        }'''
 
 # Ввод не трогаем: в нарезке источник истины — Editable самого BaseInputConnection.
 # Проверено по AOSP (frameworks/base BaseInputConnection.java): getEditable() для
@@ -562,6 +626,15 @@ def main() -> int:
         code = code.replace(OLD_DELETE_CODEPOINTS, NEW_DELETE_CODEPOINTS, 1)
         pathlib.Path(ACTIVITY).write_text(code, encoding="utf-8")
         print("экран: backspace идёт через deleteSurroundingTextInCodePoints")
+
+    # 7. Отчёт клавиатуре: полный снимок со словом в наборе больше не дублирует его
+    # в extract/fullscreen-редакторе. Буфер, sync() и backspace остаются как в нарезке.
+    if "MoonMC: что уже отдано" not in code:
+        if OLD_REPORT_BODY not in code:
+            die("HorizonActivity.java: не нашёл report() для отчёта клавиатуре")
+        code = code.replace(OLD_REPORT_BODY, NEW_REPORT_BODY, 1)
+        pathlib.Path(ACTIVITY).write_text(code, encoding="utf-8")
+        print("экран: отчёт клавиатуре без дублей составного текста")
     if not label or label.group(1) != LABEL:
         die("не удалось выставить android:label")
     return 0

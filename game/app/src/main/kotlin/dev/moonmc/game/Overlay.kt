@@ -91,8 +91,12 @@ object Overlay {
     @JvmStatic
     fun attach(activity: Activity) {
         activity.runOnUiThread {
+            // Каждый attach — чистый лист: прошлое скрытие под IME не наследуем.
+            imeShown = false
+            imeSeen = false
             try {
                 show(activity)
+                setLayerHidden(false)
             } catch (t: Throwable) {
                 // Слой не должен ронять игру: пишем причину рядом с игрой.
                 report(activity, "moonmc-overlay.txt", t.stackTraceToString())
@@ -147,6 +151,7 @@ object Overlay {
         }
         step(activity, "start")
         imeShown = false
+        imeSeen = false
         val host = OverlayHost(activity)
         step(activity, "host ok")
         // Пишем софтверный слой: над Vulkan-поверхностью игры аппаратный рендер Compose
@@ -238,35 +243,40 @@ object Overlay {
     fun gameKeyboard(show: Boolean) {
         if (panelOpenNow) return
         imeShown = show
+        if (!show) {
+            // Поле закрыто (отправка, Esc, движок): прошлое скрытие больше не действует.
+            // Слой возвращаем сразу, не дожидаясь инсетов IME.
+            imeSeen = false
+            uiHandler.post { setLayerHidden(false) }
+        }
     }
 
     /** Клавиатура занимает низ экрана, но слой остаётся: его Esc нужен, чтобы выйти
      * из чата. Плашек ESC/ввод над клавиатурой больше нет — кнопка в самой клавиатуре
      * отправляет сообщение и закрывает её. */
 
-    /** Клавиатура на экране: слой полностью прячется, чтобы не мешать вводу. */
-    private var lastHidden = false
-
     /** Инсеты про IME хоть раз приходили: тогда флагу движка больше не верим. */
     private var imeSeen = false
 
-    /** Клавиатура поднялась (и это не наш ввод) — слой не рисуется вообще.
-     * Закрылась — слой возвращается на весь экран. */
-    private fun applyKeyboard(activity: Activity, ownInput: Boolean) {
+    /** Всё, что трогает окно слоя, — только на главном потоке. */
+    private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** Слой сейчас скрыт? Источник истины — сам content, а не прошлое решение:
+     *  закешированный флаг переживал re-entry и оставлял окно в старом виде. */
+    private fun layerHidden(): Boolean {
+        val view = content ?: return false
+        return view.visibility != android.view.View.VISIBLE
+    }
+
+    /** Одно состояние окна: либо скрыт целиком (клавиатура), либо на весь экран.
+     *  Идемпотентно: повторный вызов с тем же состоянием ничего не делает. */
+    private fun setLayerHidden(hidden: Boolean) {
         runCatching {
             val window = dialog?.window ?: return@runCatching
-            val content = content ?: return@runCatching
-            val screen = resources(activity).heightPixels
-            val ime = imeHeightPx(activity)
-            if (ime > screen / 8) imeSeen = true
-            // Флаг движка — только пока инсеты ни разу не приходили: иначе он
-            // навсегда оставлял слой спрятанным после закрытия клавиатуры.
-            val wanted = runCatching { Native.keyboardShown() }.getOrDefault(false)
-            val hidden = !ownInput && (ime > screen / 8 || (!imeSeen && wanted))
-            if (hidden == lastHidden) return@runCatching
-            lastHidden = hidden
+            val view = content ?: return@runCatching
+            if (layerHidden() == hidden) return@runCatching
             if (hidden) {
-                content.visibility = android.view.View.GONE
+                view.visibility = android.view.View.GONE
                 host?.passthrough = true
                 window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
                 window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, 1)
@@ -276,13 +286,33 @@ object Overlay {
                     WindowManager.LayoutParams.MATCH_PARENT,
                     WindowManager.LayoutParams.MATCH_PARENT,
                 )
-                content.visibility = android.view.View.VISIBLE
+                view.visibility = android.view.View.VISIBLE
                 host?.passthrough = false
             }
             android.util.Log.i(
                 "MoonOverlay",
                 "клавиатура: " + if (hidden) "слой скрыт" else "слой возвращён",
             )
+        }
+    }
+
+    /** Клавиатура поднялась (и это не наш ввод) — слой не рисуется вообще.
+     * Закрылась — слой возвращается на весь экран. */
+    private fun applyKeyboard(activity: Activity, ownInput: Boolean) {
+        runCatching {
+            val screen = resources(activity).heightPixels
+            val ime = imeHeightPx(activity)
+            if (ime > screen / 8) imeSeen = true
+            // Панель профилей и редактор — наш собственный ввод: слой не прячем.
+            if (ownInput) {
+                setLayerHidden(false)
+                return@runCatching
+            }
+            // Флаг движка — только запасной путь, пока инсеты про IME не приходили,
+            // и только пока поле открыто: после закрытия он оставался true навсегда.
+            val wanted = imeShown && !imeSeen &&
+                runCatching { Native.keyboardShown() }.getOrDefault(false)
+            setLayerHidden(ime > screen / 8 || wanted)
         }
     }
 
