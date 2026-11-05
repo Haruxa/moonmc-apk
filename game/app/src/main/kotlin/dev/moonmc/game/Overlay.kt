@@ -2,6 +2,9 @@ package dev.moonmc.game
 
 import android.app.Activity
 import android.app.Dialog
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.view.WindowManager
@@ -17,6 +20,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -45,10 +49,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color as C
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -846,10 +855,51 @@ object Overlay {
         }
     }
 
-    /** Пока движок готовит ресурсы: луна Moon и что именно происходит. */
+    /** Знак лаунчера: drawable из ci/branding (тот же PNG, что у заставки и иконки). */
+    private const val LOADING_LOGO = "splash_moon"
+
+    /** Пиксель считается частью знака, если он заметно непрозрачный. */
+    private const val LOADING_LOGO_ALPHA = 96
+
+    /**
+     * PNG знака без прозрачных полей: в диске он занимает столько же места, сколько
+     * занимала луна-глиф. Ресурс ищется по имени — каталог res готовит CI
+     * (`ci/branding` -> `android/res`), поэтому имя не зашито в R на этапе компиляции.
+     */
+    private fun loadingLogo(context: Context): ImageBitmap? = runCatching {
+        val resources = context.resources
+        val id = resources.getIdentifier(LOADING_LOGO, "drawable", context.packageName)
+        if (id == 0) return@runCatching null
+        val options = BitmapFactory.Options().apply { inSampleSize = 4 }
+        val bitmap = BitmapFactory.decodeResource(resources, id, options) ?: return@runCatching null
+        val width = bitmap.width
+        val height = bitmap.height
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        var left = width
+        var top = height
+        var right = -1
+        var bottom = -1
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                if ((pixels[y * width + x] ushr 24) < LOADING_LOGO_ALPHA) continue
+                if (x < left) left = x
+                if (x > right) right = x
+                if (y < top) top = y
+                if (y > bottom) bottom = y
+            }
+        }
+        if (right < left || bottom < top) return@runCatching null
+        Bitmap.createBitmap(bitmap, left, top, right - left + 1, bottom - top + 1).asImageBitmap()
+    }.getOrNull()
+
+    /** Пока движок готовит ресурсы: знак Moon и что именно происходит. */
     @Composable
     private fun LoadingScreen() {
         val scheme = MaterialTheme.colorScheme
+        // Знак читается один раз: дальше только анимация и цвет схемы.
+        val context = LocalContext.current
+        val logo = remember(context) { loadingLogo(context) }
         // Дыхание знака и мерцание звёзд: expressive-движение, без тяжёлых эффектов.
         val breath = rememberInfiniteTransition(label = "moon")
         val scale by breath.animateFloat(
@@ -899,7 +949,20 @@ object Overlay {
                         .background(scheme.primaryContainer),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text("☾", color = scheme.onPrimaryContainer, fontSize = 40.sp)
+                    if (logo != null) {
+                        // Пиксельные края без сглаживания, цвет — как у прежнего глифа,
+                        // поэтому Material-тинт схемы и масштаб-анимация работают как раньше.
+                        Image(
+                            bitmap = logo,
+                            contentDescription = null,
+                            modifier = Modifier.size(56.dp),
+                            filterQuality = FilterQuality.None,
+                            colorFilter = ColorFilter.tint(scheme.onPrimaryContainer),
+                        )
+                    } else {
+                        // Без ресурса (локальная сборка без CI-каталога res): прежний глиф.
+                        Text("☾", color = scheme.onPrimaryContainer, fontSize = 40.sp)
+                    }
                 }
                 Text(
                     "MoonMC",
