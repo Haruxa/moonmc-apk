@@ -81,9 +81,24 @@ object Overlay {
     private const val LAYER_OFF = "moonmc-layer-off.txt"
     /** Единый каталог отчётов: рядом с игрой, без отдельных txt в «Загрузках». */
     private const val LOGS = "/sdcard/MoonMC/logs"
+    /** Клавиатура закрылась, если инсетов нет столько опросов подряд (шаг 250 мс). */
+    private const val IME_GONE_POLLS = 2
+    /** Сколько ждём первых инсетов после просьбы показать клавиатуру, мс. */
+    private const val IME_OPEN_GRACE_MS = 1_200L
+    /** Явное закрытие (отправка, Esc) сильнее гаснущих инсетов, пока клавиатура уезжает. */
+    private const val IME_CLOSE_GRACE_MS = 600L
     private var dialog: Dialog? = null
-    /** Открыта ли сейчас системная клавиатура (кнопка IME переключает). */
+    /** Просили показать клавиатуру (кнопка IME или поле игры). Пока инсетов нет,
+     *  слой прячем по просьбе, но не дольше IME_OPEN_GRACE_MS. */
     private var imeShown = false
+    /** Клавиатура видна по последнему инсету окна: единственный источник истины. */
+    private var imeVisible = false
+    /** Сколько опросов подряд инсетов IME нет: системную «Назад» движок не видит. */
+    private var imeGone = 0
+    /** До этого времени нулевые инсеты — ещё открытие, а не закрытие. */
+    private var imeOpeningUntil = 0L
+    /** До этого времени явное закрытие (отправка) сильнее гаснущих инсетов. */
+    private var imeClosingUntil = 0L
     private var content: android.view.View? = null
     private var host: OverlayHost? = null
 
@@ -95,8 +110,7 @@ object Overlay {
     fun attach(activity: Activity) {
         activity.runOnUiThread {
             // Каждый attach — чистый лист: прошлое скрытие под IME не наследуем.
-            imeShown = false
-            imeSeen = false
+            forgetIme()
             try {
                 show(activity)
                 setLayerHidden(false)
@@ -140,8 +154,7 @@ object Overlay {
             return
         }
         step(activity, "start")
-        imeShown = false
-        imeSeen = false
+        forgetIme()
         val host = OverlayHost(activity)
         step(activity, "host ok")
         // Пишем софтверный слой: над Vulkan-поверхностью игры аппаратный рендер Compose
@@ -220,7 +233,11 @@ object Overlay {
     /** Клавиатура Android: кнопка IME их раскладки. Открывает её сам движок
      * (event_loop::set_keyboard), иначе ввод в чат не доходит. */
     private fun toggleIme() {
-        imeShown = !imeShown
+        // Решает фактическая видимость: после системной «Назад» зеркало просьбы
+        // (imeShown) осталось бы true, и кнопка закрывала бы уже скрытую клавиатуру.
+        imeShown = !imeVisible
+        imeClosingUntil = 0L
+        if (imeShown) imeOpeningUntil = nowMs() + IME_OPEN_GRACE_MS
         Native.keyboard(imeShown)
     }
 
@@ -233,23 +250,39 @@ object Overlay {
     fun gameKeyboard(show: Boolean) {
         if (panelOpenNow) return
         imeShown = show
-        if (!show) {
-            // Поле закрыто (отправка, Esc, движок): прошлое скрытие больше не действует.
-            // Слой возвращаем сразу, не дожидаясь инсетов IME.
-            imeSeen = false
-            uiHandler.post { setLayerHidden(false) }
+        if (show) {
+            // Инсеты придут через кадр-два: нули до них — ещё открытие, не закрытие.
+            imeGone = 0
+            imeClosingUntil = 0L
+            imeOpeningUntil = nowMs() + IME_OPEN_GRACE_MS
+            return
         }
+        // Поле закрыто (отправка, Esc, движок): прошлое скрытие больше не действует.
+        // Слой возвращаем сразу и не даём гаснущим инсетам спрятать его снова.
+        forgetIme()
+        imeClosingUntil = nowMs() + IME_CLOSE_GRACE_MS
+        uiHandler.post { setLayerHidden(false) }
     }
 
     /** Клавиатура занимает низ экрана, но слой остаётся: его Esc нужен, чтобы выйти
      * из чата. Плашек ESC/ввод над клавиатурой больше нет — кнопка в самой клавиатуре
      * отправляет сообщение и закрывает её. */
 
-    /** Инсеты про IME хоть раз приходили: тогда флагу движка больше не верим. */
-    private var imeSeen = false
-
     /** Всё, что трогает окно слоя, — только на главном потоке. */
     private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    private fun nowMs(): Long = android.os.SystemClock.elapsedRealtime()
+
+    /** Клавиатура закрыта: ни просьба открыть её, ни прошлые инсеты ничего не значат.
+     *  Без этого флаг движка (`Native.keyboardShown()`) оставался true навсегда:
+     *  системная «Назад» прячет IME мимо `setKeyboard(false)` и его никто не сбрасывал. */
+    private fun forgetIme() {
+        imeShown = false
+        imeVisible = false
+        imeGone = 0
+        imeOpeningUntil = 0L
+        imeClosingUntil = 0L
+    }
 
     /** Слой сейчас скрыт? Источник истины — сам content, а не прошлое решение:
      *  закешированный флаг переживал re-entry и оставлял окно в старом виде. */
@@ -292,17 +325,29 @@ object Overlay {
         runCatching {
             val screen = resources(activity).heightPixels
             val ime = imeHeightPx(activity)
-            if (ime > screen / 8) imeSeen = true
-            // Панель профилей и редактор — наш собственный ввод: слой не прячем.
+            val now = nowMs()
+            // Панель профилей и редактор — наш собственный ввод: слой не прячем,
+            // а состояние игры после них начинаем с чистого листа.
             if (ownInput) {
+                forgetIme()
                 setLayerHidden(false)
                 return@runCatching
             }
-            // Флаг движка — только запасной путь, пока инсеты про IME не приходили,
-            // и только пока поле открыто: после закрытия он оставался true навсегда.
-            val wanted = imeShown && !imeSeen &&
-                runCatching { Native.keyboardShown() }.getOrDefault(false)
-            setLayerHidden(ime > screen / 8 || wanted)
+            val visible = ime > screen / 8 && now >= imeClosingUntil
+            if (visible) {
+                imeVisible = true
+                imeGone = 0
+            } else if (imeVisible || (imeShown && now >= imeOpeningUntil)) {
+                // Клавиатуру уже видели — её исчезновение считаем сразу; просьбу
+                // открыть без инсетов ждём не дольше IME_OPEN_GRACE_MS.
+                // Системная «Назад» прячет IME мимо движка (его флаг остался бы true).
+                imeGone++
+                if (imeGone >= IME_GONE_POLLS) {
+                    forgetIme()
+                    android.util.Log.i("MoonOverlay", "клавиатура: закрыта системой, слой возвращён")
+                }
+            }
+            setLayerHidden(imeVisible || imeShown)
         }
     }
 

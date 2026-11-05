@@ -883,6 +883,16 @@ private val keyChoices: List<KeyChoice> = buildList {
     add(KeyChoice("GLFW_MOUSE_BUTTON_MIDDLE", "СКМ", mouse = true))
 }
 
+/** Вызовы: не клавиша, а действие лаунчера или кнопка мыши. */
+private data class CallChoice(val key: String, val label: String)
+
+private val callChoices: List<CallChoice> = listOf(
+    CallChoice("launcher.event.switch_ime", "Клавиатура"),
+    CallChoice("GLFW_MOUSE_BUTTON_LEFT", "ЛКМ"),
+    CallChoice("GLFW_MOUSE_BUTTON_RIGHT", "ПКМ"),
+    CallChoice("GLFW_MOUSE_BUTTON_MIDDLE", "СКМ"),
+)
+
 private fun eventLabel(event: ClickEvent): String {
     if (event.type == ClickEvent.Type.LauncherEvent) {
         return when {
@@ -901,6 +911,7 @@ private fun eventLabel(event: ClickEvent): String {
 @Composable
 private fun KeyPickDialog(onDismiss: () -> Unit, onPick: (ClickEvent) -> Unit) {
     var query by remember { mutableStateOf("") }
+    var tab by remember { mutableIntStateOf(0) }
     val shown = keyChoices.filter {
         query.isBlank() || it.label.contains(query, ignoreCase = true) ||
             it.name.contains(query, ignoreCase = true)
@@ -910,27 +921,68 @@ private fun KeyPickDialog(onDismiss: () -> Unit, onPick: (ClickEvent) -> Unit) {
         title = { Text("Клавиша") },
         text = {
             Column(Modifier.fillMaxHeight(0.9f)) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    singleLine = true,
-                    label = { Text("Поиск") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                TabRow(selectedTabIndex = tab) {
+                    Tab(
+                        selected = tab == 0,
+                        onClick = { tab = 0 },
+                        text = { Text("Клавиатура") },
+                    )
+                    Tab(
+                        selected = tab == 1,
+                        onClick = { tab = 1 },
+                        text = { Text("Вызовы") },
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
-                LazyVerticalGrid(columns = GridCells.Adaptive(64.dp), modifier = Modifier.weight(1f)) {
-                    items(shown) { choice ->
-                        Surface(
-                            onClick = {
-                                val type = if (choice.mouse) ClickEvent.Type.LauncherEvent else ClickEvent.Type.Key
-                                onPick(ClickEvent(type, choice.name))
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            modifier = Modifier.padding(3.dp).height(40.dp),
-                        ) {
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text(choice.label, fontSize = 12.sp)
+                if (tab == 0) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        singleLine = true,
+                        label = { Text("Поиск") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                if (tab == 1) {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(96.dp),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        // Вызовы — LauncherEvent: движок получает их минуя keycode.
+                        items(callChoices) { choice ->
+                            Surface(
+                                onClick = {
+                                    onPick(ClickEvent(ClickEvent.Type.LauncherEvent, choice.key))
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                modifier = Modifier.padding(3.dp).height(40.dp),
+                            ) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text(choice.label, fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(64.dp),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        items(shown) { choice ->
+                            Surface(
+                                onClick = {
+                                    val type = if (choice.mouse) ClickEvent.Type.LauncherEvent else ClickEvent.Type.Key
+                                    onPick(ClickEvent(type, choice.name))
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                modifier = Modifier.padding(3.dp).height(40.dp),
+                            ) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text(choice.label, fontSize = 12.sp)
+                                }
                             }
                         }
                     }
