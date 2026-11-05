@@ -277,6 +277,23 @@ pub extern "system" fn Java_dev_moonmc_game_Native_enterNative(
 ) {
     crate::moon_input::push(crate::moon_input::Event::Submit);
 }
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+/// SAFETY: JNI-экспорт: имя символа задаётся конвенцией JNI, зовётся только из нашего Java-слоя.
+pub extern "system" fn Java_dev_moonmc_game_Native_textNative(
+    mut env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+    text: jni::objects::JString,
+) {
+    // Текст макроса идёт тем же путём, что и системная клавиатура: очередь Typed
+    // разбирает moon_ime, поэтому своих кодов символов макрос не заводит.
+    let text: String = env
+        .get_string(&text)
+        .map(|s| s.into())
+        .unwrap_or_default();
+    horizon_client::event_loop::push_typed(horizon_client::event_loop::Typed::Text(text));
+}
 """
                 if "Java_dev_moonmc_game_Native_keyDown" not in root:
                     root = root + jni

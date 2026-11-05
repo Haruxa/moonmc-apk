@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
@@ -70,10 +72,9 @@ import kotlin.math.roundToInt
  * Окно прозрачное и лежит поверх нативной поверхности (обычные view под SurfaceView
  * не видны, окно-диалог — видно). Раскладка читается из `touch/zalith/layout.json`
  * в папке игры; если файла нет — берётся встроенная `assets/default_layout.json`.
- * Настройки производительности пишутся в `moonmc/perf.txt`.
+ * Первая вкладка панели — макросы: они лежат в `/sdcard/MoonMC/macros.json`.
  */
 object Overlay {
-    private const val PERF = "moonmc/perf.txt"
     private const val GEAR = "moonmc/gear.txt"
     private const val LAYOUT_DIR = "touch/zalith"
     /** Файл-выключатель слоя управления (крайняя мера при крашах). */
@@ -890,7 +891,7 @@ object Overlay {
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    TabIcon(Icons.Filled.Settings, "Графика", tab == 0) { onTab(0) }
+                    TabIcon(Icons.Filled.PlayArrow, "Макросы", tab == 0) { onTab(0) }
                     TabIcon(Icons.Filled.Person, "Профили", tab == 1) { onTab(1) }
                     TabIcon(Icons.Filled.Build, "Управление", tab == 2) { onTab(2) }
                 }
@@ -898,7 +899,7 @@ object Overlay {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             when (tab) {
-                                0 -> "Графика"
+                                0 -> "Макросы"
                                 1 -> "Профили"
                                 else -> "Управление"
                             },
@@ -911,7 +912,7 @@ object Overlay {
                         }
                     }
                     when (tab) {
-                        0 -> GraphicsTab(activity)
+                        0 -> MacrosTab()
                         1 -> ProfilesTab()
                         else -> ControlsTab(activity, onOpenEditor)
                     }
@@ -1205,41 +1206,371 @@ object Overlay {
     }
 
     @Composable
-    private fun GraphicsTab(activity: Activity) {
-        val saved = remember { readPerf(activity) }
-        var dynamicResolution by remember { mutableStateOf(saved["dynamic_resolution"] ?: "on") }
-        var hdr by remember { mutableStateOf(saved["hdr"] ?: "off") }
-        var fpsCap by remember { mutableStateOf(saved["fps_cap"] ?: "60") }
+    private fun MacrosTab() {
+        val loaded = remember { Macros.load() }
+        var macros by remember { mutableStateOf(loaded.macros) }
+        var note by remember { mutableStateOf(loaded.error) }
+        var editing by remember { mutableStateOf<Macro?>(null) }
+        var pendingDelete by remember { mutableStateOf<Macro?>(null) }
+        val running = MacroRunner.running
 
-        fun store() = writePerf(
-            activity,
-            mapOf(
-                "dynamic_resolution" to dynamicResolution,
-                "hdr" to hdr,
-                "fps_cap" to fpsCap,
-            ),
-        )
+        fun store(next: List<Macro>) {
+            macros = next
+            Macros.save(next)?.let { note = it }
+        }
 
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Toggle("Динамическое разрешение", dynamicResolution == "on") {
-                dynamicResolution = if (it) "on" else "off"; store()
+        // Редактор занимает вкладку целиком: рядом с полями шагов места нет.
+        val current = editing
+        if (current != null) {
+            MacroEditor(
+                initial = current,
+                taken = macros.map { it.name }.filter { it != current.name }.toSet(),
+                onCancel = { editing = null },
+                onSave = { macro ->
+                    val at = macros.indexOfFirst { it.name == current.name }
+                    store(
+                        if (at >= 0) macros.toMutableList().also { it[at] = macro }
+                        else macros + macro,
+                    )
+                    editing = null
+                },
+            )
+            return
+        }
+
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (running != null) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "Выполняется",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                            Text(
+                                running,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                        TextButton(onClick = { MacroRunner.stop() }) {
+                            Text("Стоп", fontSize = 12.sp)
+                        }
+                    }
+                }
             }
-            Toggle("HDR-вывод", hdr == "on") { hdr = if (it) "on" else "off"; store() }
-            Text("Лимит FPS", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("30", "60", "90", "0").forEach { value ->
-                    FilterChip(
-                        selected = fpsCap == value,
-                        onClick = { fpsCap = value; store() },
-                        label = { Text(if (value == "0") "∞" else value, fontSize = 12.sp) },
+
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(macros) { macro ->
+                    MacroRow(
+                        macro = macro,
+                        busy = running != null,
+                        onRun = { note = MacroRunner.start(macro) },
+                        onEdit = { editing = macro },
+                        onDelete = { pendingDelete = macro },
                     )
                 }
             }
+
+            if (macros.isEmpty()) {
+                Text(
+                    "Пока пусто: создай макрос или добавь шаблон /spawn.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Button(onClick = { editing = Macro(name = "") }, modifier = Modifier.fillMaxWidth()) {
+                Text("Новый макрос")
+            }
+            note?.let {
+                Text(it, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Text(
-                "Управление — из Zalith Launcher 2: раскладка touch/zalith/layout.json",
+                "macros.json: ${Macros.path()}",
+                fontSize = 10.sp,
+                maxLines = 2,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 11.sp,
             )
+        }
+
+        val removing = pendingDelete
+        if (removing != null) {
+            AlertDialog(
+                onDismissRequest = { pendingDelete = null },
+                title = { Text("Удалить макрос?") },
+                text = { Text("«${removing.name}» будет удалён из macros.json") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        store(macros.filterNot { it.name == removing.name })
+                        pendingDelete = null
+                    }) { Text("Удалить") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDelete = null }) { Text("Отмена") }
+                },
+            )
+        }
+    }
+
+    /** Строка списка: тап — редактировать, ▶ — запустить, ✕ — удалить с вопросом. */
+    @Composable
+    private fun MacroRow(
+        macro: Macro,
+        busy: Boolean,
+        onRun: () -> Unit,
+        onEdit: () -> Unit,
+        onDelete: () -> Unit,
+    ) {
+        Surface(
+            onClick = onEdit,
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 12.dp, end = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(macro.name, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+                    Text(
+                        stepsSummary(macro),
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = onRun, enabled = !busy) {
+                    Icon(
+                        Icons.Filled.PlayArrow,
+                        "Запустить",
+                        tint = if (busy) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                        else MaterialTheme.colorScheme.primary,
+                    )
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        Icons.Filled.Close,
+                        "Удалить",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+        }
+    }
+
+    /** Кратко о шагах: «/spawn · пауза · кл.84» — по строке видно, что запустится. */
+    private fun stepsSummary(macro: Macro): String =
+        if (macro.steps.isEmpty()) "без шагов"
+        else macro.steps.joinToString(" · ") { step ->
+            when (step.kind) {
+                MacroStep.Kind.Text -> step.text.take(14).ifBlank { "текст" }
+                MacroStep.Kind.Key -> "кл.${step.code}"
+                MacroStep.Kind.Delay -> "${step.millis}мс"
+            }
+        }.take(48)
+
+    /**
+     * Редактор макроса вместо списка: название, шаги, шаблоны команд.
+     * Файл не трогаем, пока не нажали «Сохранить»: отмена ничего не пишет.
+     */
+    @Composable
+    private fun MacroEditor(
+        initial: Macro,
+        taken: Set<String>,
+        onCancel: () -> Unit,
+        onSave: (Macro) -> Unit,
+    ) {
+        var name by remember { mutableStateOf(initial.name) }
+        var steps by remember { mutableStateOf(initial.steps) }
+        var error by remember { mutableStateOf<String?>(null) }
+
+        fun add(step: MacroStep) {
+            if (steps.size >= Macros.MAX_STEPS) {
+                error = "больше ${Macros.MAX_STEPS} шагов нельзя"
+                return
+            }
+            steps = steps + step
+            error = null
+        }
+
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (initial.name.isEmpty()) "Новый макрос" else "Макрос",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 15.sp,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "${steps.size}/${Macros.MAX_STEPS}",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlinedTextField(
+                value = name,
+                onValueChange = {
+                    name = it.take(Macros.NAME_MAX)
+                    error = null
+                },
+                singleLine = true,
+                label = { Text("Название", fontSize = 11.sp) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                itemsIndexed(steps) { index, step ->
+                    MacroStepRow(
+                        index = index,
+                        step = step,
+                        onChange = { next ->
+                            steps = steps.toMutableList().also { it[index] = next }
+                        },
+                        onRemove = { steps = steps.filterIndexed { i, _ -> i != index } },
+                    )
+                }
+            }
+            // Готовые команды: один тап добавляет один шаг text.
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                Macros.TEMPLATES.forEach { command ->
+                    TextButton(
+                        onClick = { add(MacroStep(MacroStep.Kind.Text, text = command)) },
+                        contentPadding = PaddingValues(horizontal = 6.dp),
+                    ) { Text(command, fontSize = 11.sp) }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                TextButton(onClick = { add(MacroStep(MacroStep.Kind.Text, text = "")) }) {
+                    Text("+ текст", fontSize = 11.sp)
+                }
+                TextButton(onClick = { add(MacroStep(MacroStep.Kind.Key, code = 84)) }) {
+                    Text("+ клавиша", fontSize = 11.sp)
+                }
+                TextButton(onClick = { add(MacroStep(MacroStep.Kind.Delay, millis = 500)) }) {
+                    Text("+ пауза", fontSize = 11.sp)
+                }
+            }
+            error?.let {
+                Text(it, fontSize = 10.sp, color = MaterialTheme.colorScheme.error)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        val clean = name.trim()
+                        when {
+                            clean.isEmpty() -> error = "нужно название"
+                            clean in taken -> error = "имя «$clean» уже занято"
+                            steps.isEmpty() -> error = "добавь хотя бы один шаг"
+                            else -> onSave(Macro(clean, steps))
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                ) { Text("Сохранить") }
+                TextButton(onClick = onCancel) { Text("Отмена") }
+            }
+        }
+    }
+
+    /** Шаг в редакторе: текст в чат, клавиша GLFW или пауза в миллисекундах. */
+    @Composable
+    private fun MacroStepRow(
+        index: Int,
+        step: MacroStep,
+        onChange: (MacroStep) -> Unit,
+        onRemove: () -> Unit,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "${index + 1}. " + when (step.kind) {
+                            MacroStep.Kind.Text -> "текст в чат"
+                            MacroStep.Kind.Key -> "клавиша"
+                            MacroStep.Kind.Delay -> "пауза"
+                        },
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    IconButton(onClick = onRemove, modifier = Modifier.size(24.dp)) {
+                        Icon(
+                            Icons.Filled.Close,
+                            "Удалить шаг",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+                when (step.kind) {
+                    MacroStep.Kind.Text -> OutlinedTextField(
+                        value = step.text,
+                        onValueChange = { onChange(step.copy(text = it.take(Macros.MAX_TEXT))) },
+                        singleLine = true,
+                        placeholder = { Text("например /spawn", fontSize = 12.sp) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    MacroStep.Kind.Key -> {
+                        OutlinedTextField(
+                            value = if (step.code > 0) step.code.toString() else "",
+                            onValueChange = { value ->
+                                val digits = value.filter { it.isDigit() }.take(3)
+                                onChange(step.copy(code = digits.toIntOrNull() ?: 0))
+                            },
+                            singleLine = true,
+                            label = { Text("Код GLFW", fontSize = 10.sp) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            listOf("T чат" to 84, "Enter" to 257, "Esc" to 256, "E" to 69)
+                                .forEach { (label, code) ->
+                                    TextButton(
+                                        onClick = { onChange(step.copy(code = code)) },
+                                        contentPadding = PaddingValues(horizontal = 4.dp),
+                                    ) { Text(label, fontSize = 10.sp) }
+                                }
+                        }
+                    }
+                    MacroStep.Kind.Delay -> OutlinedTextField(
+                        value = if (step.millis > 0) step.millis.toString() else "",
+                        onValueChange = { value ->
+                            val digits = value.filter { it.isDigit() }.take(5)
+                            onChange(
+                                step.copy(
+                                    millis = (digits.toLongOrNull() ?: 0L)
+                                        .coerceAtMost(Macros.MAX_DELAY),
+                                ),
+                            )
+                        },
+                        singleLine = true,
+                        label = { Text("Миллисекунды", fontSize = 10.sp) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
         }
     }
 
@@ -1395,18 +1726,6 @@ object Overlay {
         }
     }
 
-    @Composable
-    private fun Toggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
-            Switch(checked = checked, onCheckedChange = onChange)
-        }
-    }
-
     /** Аккаунт из списка: ник и закреплён ли он. */
     internal data class Profile(val name: String, val pinned: Boolean = false)
 
@@ -1464,21 +1783,6 @@ object Overlay {
             val file = gameDir(GEAR)
             file.parentFile?.mkdirs()
             file.writeText("${at.x.roundToInt()} ${at.y.roundToInt()}")
-        }
-    }
-
-    private fun readPerf(activity: Activity): Map<String, String> = runCatching {
-        gameDir(PERF).readLines().mapNotNull { line ->
-            val i = line.indexOf('=')
-            if (i <= 0) null else line.substring(0, i).trim() to line.substring(i + 1).trim()
-        }.toMap()
-    }.getOrDefault(emptyMap())
-
-    private fun writePerf(activity: Activity, values: Map<String, String>) {
-        runCatching {
-            val f = gameDir(PERF)
-            f.parentFile?.mkdirs()
-            f.writeText(values.entries.joinToString("\n") { "${it.key}=${it.value}" } + "\n")
         }
     }
 }

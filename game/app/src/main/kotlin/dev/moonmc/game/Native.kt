@@ -83,6 +83,13 @@ object Native {
         runCatching { enterNative() }
     }
 
+    /** Текст макроса: та же очередь, что у системной клавиатуры (`moon_ime`). */
+    fun text(value: String) {
+        if (value.isEmpty()) return
+        ensure()
+        runCatching { textNative(value) }
+    }
+
     private external fun keyDown(code: Int, pressed: Boolean)
     private external fun mouseDown(button: Int, pressed: Boolean)
     private external fun stickMove(x: Float, y: Float)
@@ -95,4 +102,5 @@ object Native {
     private external fun inMenuNative(): Boolean
     private external fun readyNative(): Boolean
     private external fun enterNative()
+    private external fun textNative(value: String)
 }
