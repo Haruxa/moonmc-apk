@@ -429,10 +429,10 @@ OVERLAY = '''        // MoonMC: любая необработанная ошиб
                 if (!written) {
                     java.io.File dir = getExternalFilesDir(null);
                     if (dir != null) {
-                        java.io.File logs = new java.io.File(dir, "logs");
-                        logs.mkdirs();
+                        java.io.File fallback = new java.io.File(dir, "logs");
+                        fallback.mkdirs();
                         try (java.io.FileWriter out =
-                                 new java.io.FileWriter(new java.io.File(logs, "moonmc-crash.txt"))) {
+                                 new java.io.FileWriter(new java.io.File(fallback, "moonmc-crash.txt"))) {
                             out.write(body);
                         } catch (Throwable ignoredCopy) {
                             // писать некуда — молчим
