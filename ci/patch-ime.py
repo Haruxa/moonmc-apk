@@ -2,12 +2,13 @@
 """MoonMC: IME чата для пина, где `event_loop::take_typed` никто не разбирает.
 
 Ставит `crates/horizon-client/src/game/moon_ime.rs` (из ci/moon_ime.rs), объявляет
-`mod moon_ime;` рядом с `mod chat;` и вставляет вызов `self.moon_ime_frame();`
+`mod moon_ime;` рядом с `mod chat;` и вставляет вызов `self.moon_ime_frame(event_loop);`
 в `about_to_wait` сразу после `self.touch_frame(event_loop);`.
 
 Порядок в workflow: сначала patch-touch.py (он добавляет кадр тач-слоя), затем
 этот патчер. Без кадра тач-слоя якорь не найден — патчер падает, а не угадывает.
-Повторный прогон не меняет ни байта.
+Повторный прогон не меняет ни байта. Вызов без `event_loop` из прежней версии
+(`self.moon_ime_frame();`) заменяется на актуальный, а не дублируется.
 """
 import pathlib
 import re
@@ -18,7 +19,7 @@ CLIENT = ROOT / "crates/horizon-client/src"
 GAME = CLIENT / "game.rs"
 MODULE = CLIENT / "game/moon_ime.rs"
 
-CALL = "self.moon_ime_frame();"
+CALL = "self.moon_ime_frame(event_loop);"
 ABOUT = "    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {"
 
 MOD_RE = re.compile(r"^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?mod moon_ime;[ \t]*$", re.MULTILINE)
@@ -27,6 +28,8 @@ CHAT_MOD_RE = re.compile(
 )
 TOUCH_RE = re.compile(r"^([ \t]*)self\.touch_frame\(event_loop\);[ \t]*$", re.MULTILINE)
 CALL_RE = re.compile(r"^[ \t]*" + re.escape(CALL) + r"[ \t]*$", re.MULTILINE)
+LEGACY = "self.moon_ime_frame();"
+LEGACY_RE = re.compile(r"^([ \t]*)" + re.escape(LEGACY) + r"[ \t]*$", re.MULTILINE)
 TOUCH = "self.touch_frame(event_loop);"
 
 ERRORS: list[str] = []
@@ -49,19 +52,34 @@ def register_module(text: str) -> str:
     return text[: m.end()] + "\n" + line + text[m.end() :]
 
 
+def previous_line(text: str, pos: int) -> str:
+    """Строка перед строкой, начинающейся с `pos`."""
+    line_start = text.rfind("\n", 0, pos) + 1
+    return text[:line_start].rstrip("\n").rsplit("\n", 1)[-1].strip()
+
+
 def insert_call(text: str) -> str:
     """Вызов обработчика сразу после `touch_frame` в `about_to_wait`."""
     calls = list(CALL_RE.finditer(text))
-    if len(calls) > 1:
-        ERRORS.append(f"game.rs: вызов `{CALL}` встречается {len(calls)} раз")
+    legacy = list(LEGACY_RE.finditer(text))
+    total = len(calls) + len(legacy)
+    if total > 1:
+        ERRORS.append(f"game.rs: вызов moon_ime_frame встречается {total} раз")
         return text
     if calls:
-        pos = calls[0].start()
-        line_start = text.rfind("\n", 0, pos) + 1
-        prev = text[:line_start].rstrip("\n").rsplit("\n", 1)[-1].strip()
-        if prev != TOUCH:
+        if previous_line(text, calls[0].start()) != TOUCH:
             ERRORS.append(f"game.rs: `{CALL}` стоит не сразу после `{TOUCH}`")
         return text
+    if legacy:
+        # Вызов прежнего патчера: меняем на вариант с event_loop на том же месте,
+        # чтобы не получить два разбора очереди в одном кадре.
+        if previous_line(text, legacy[0].start()) != TOUCH:
+            ERRORS.append(
+                f"game.rs: `{LEGACY}` стоит не сразу после `{TOUCH}` — миграция не угадывает"
+            )
+            return text
+        indent = legacy[0].group(1)
+        return text[: legacy[0].start()] + indent + CALL + text[legacy[0].end() :]
     touches = list(TOUCH_RE.finditer(text))
     if len(touches) != 1:
         ERRORS.append(
@@ -105,7 +123,10 @@ def main() -> None:
         print("game/moon_ime.rs: установлен")
     if text != original:
         GAME.write_text(text)
-        print("game.rs: mod moon_ime и вызов moon_ime_frame после touch_frame")
+        if LEGACY_RE.search(original) and not LEGACY_RE.search(text):
+            print("game.rs: moon_ime_frame(); -> moon_ime_frame(event_loop);")
+        else:
+            print("game.rs: mod moon_ime и вызов moon_ime_frame после touch_frame")
     print("patch-ime: IME чата подключён")
 
 
