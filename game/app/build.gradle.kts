@@ -8,11 +8,11 @@ val keystorePath: String? = System.getenv("MOON_KEYSTORE")
 val keystorePass: String? = System.getenv("MOON_KEYSTORE_PASS")
 
 android {
-    namespace = "dev.moonmc.moonmc"
+    namespace = "dev.haruxa.moonmc"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "dev.moonmc.moonmc"
+        applicationId = "dev.haruxa.moonmc"
         minSdk = 26
         // Android 10+ запрещает запускать файлы из папки данных при targetSdk >= 29,
         // а клиенту нужно запускать JRE (jre/bin/java). 28 — как у Pojav/Zalith.

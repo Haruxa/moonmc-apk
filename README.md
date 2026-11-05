@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/Haruxa/moonmc-apk/actions/workflows/apk.yml"><img src="https://github.com/Haruxa/moonmc-apk/actions/workflows/apk.yml/badge.svg" alt="apk"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-9BE8BE?style=flat-square" alt="GPL-3.0"></a>
-  <img src="https://img.shields.io/badge/package-dev.moonmc.moonmc-1F6FEB?style=flat-square" alt="package">
+  <img src="https://img.shields.io/badge/package-dev.haruxa.moonmc-1F6FEB?style=flat-square" alt="package">
   <img src="https://img.shields.io/badge/Android-10%2B-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Android 10+">
   <img src="https://img.shields.io/badge/ABI-arm64--v8a-555?style=flat-square" alt="arm64-v8a">
   <img src="https://img.shields.io/badge/Minecraft%20files-none-critical?style=flat-square" alt="no Minecraft files">
@@ -46,7 +46,7 @@ Artifacts: `horizon-apk` (the game) and `exporters` (reused by later builds).
 ci/build-apk-modded.sh      assembly: cargo → libhorizon.so → javac/d8 → aapt2 → apk + signing
 ci/patch-game-home.py       game folder /sdcard/MoonMC, rebranding of paths, labels, title
 ci/patch-branding.py        label MoonMC, adaptive + monochrome icons, first-run screen wiring
-ci/patch-package.py         applicationId dev.moonmc.moonmc (JNI symbols included)
+ci/patch-package.py         applicationId dev.haruxa.moonmc (JNI symbols included)
 ci/patch-touch.py           on-screen controls from JSON profiles (touch/)
 ci/touch_layout.rs          the Rust side of the touch profiles
 ci/branding/**              generated icons (moon-launcher/tools/gen_icons.py --layout flat)

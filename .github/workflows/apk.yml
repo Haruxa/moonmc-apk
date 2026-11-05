@@ -307,7 +307,7 @@ jobs:
         working-directory: src
         run: python3 ci/patch-branding.py
 
-      - name: "Патч: пакет приложения dev.moonmc.moonmc"
+      - name: "Патч: пакет приложения dev.haruxa.moonmc"
         working-directory: src
         run: python3 ci/patch-package.py
 
