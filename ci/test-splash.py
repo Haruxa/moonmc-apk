@@ -212,6 +212,51 @@ def balanced(text: str) -> tuple[bool, str]:
     return not stack, "незакрытые: " + "".join(stack) if stack else ""
 
 
+GAME_KT = REPO / "game/app/src/main/kotlin/dev/moonmc/game"
+
+# Встроенные типы Kotlin: у них импорта нет и быть не должно.
+BUILTINS = {
+    "Any", "Array", "Boolean", "BooleanArray", "Byte", "ByteArray", "CharArray",
+    "Char", "Double", "DoubleArray", "Float", "FloatArray", "Int", "IntArray",
+    "List", "Long", "LongArray", "Map", "Math", "MutableList", "MutableMap",
+    "MutableSet", "Nothing", "Pair", "Set", "Short", "ShortArray", "String",
+    "Triple", "Unit",
+}
+
+
+def code_only(text: str) -> str:
+    """Код без комментариев и строк: имена из текста не считаются использованием."""
+    text = re.sub(r"/\\*.*?\\*/", " ", text, flags=re.S)
+    text = re.sub(r"//[^\n]*", " ", text)
+    text = re.sub(r'"(?:[^"\\\n]|\\.)*"', '""', text)
+    return text
+
+
+def unimported_classes(text: str) -> list[str]:
+    """Использованные классы/функции в PascalCase, для которых нет импорта.
+
+    Ловит ту ошибку, которой не видно без kotlinc: `ComposeView(context)` без
+    `import androidx.compose.ui.platform.ComposeView` роняет сборку на
+    UNRESOLVED_REFERENCE, а заодно и `setContent` на следующей строке.
+    Имена, объявленные в самом файле или в том же пакете, не считаются.
+    """
+    code = code_only(text)
+    imported = {name.rsplit(".", 1)[-1]
+                for name in re.findall(r"^import ([a-zA-Z0-9_.]+)$", text, re.M)}
+    declared: set[str] = set()
+    for path in GAME_KT.glob("*.kt"):
+        declared |= set(re.findall(
+            r"^(?:[a-z]+ )*(?:fun|class|object|val|const val) ([A-Z][A-Za-z0-9_]*)",
+            path.read_text(), re.M))
+    declared |= set(re.findall(
+        r"\b(?:fun|class|object|val|const val) ([A-Z][A-Za-z0-9_]*)\b", code))
+    used = set(re.findall(r"(?<![.\w])([A-Z][A-Za-z0-9_]*)\s*\(", code))
+    used |= set(re.findall(r"(?<![.\w])([A-Z][A-Za-z0-9_]*)\.", code))
+    return sorted(name for name in used
+                  if name not in imported and name not in declared
+                  and name not in BUILTINS)
+
+
 def test_icon() -> None:
     print("1. Знак — та самая иконка лаунчера")
     check(LOGO.is_file(), f"{LOGO.relative_to(REPO)} на месте")
@@ -254,6 +299,10 @@ def test_kotlin() -> None:
     check("rememberInfiniteTransition(label = \"splash\")" in text,
           "бесконечный переход только у звёзд")
     check("Text(\"☾\"" in text, "без PNG остаётся глиф")
+    check("import androidx.compose.ui.platform.ComposeView" in text,
+          "ComposeView импортирован (иначе UNRESOLVED_REFERENCE)")
+    leaked = unimported_classes(text)
+    check(not leaked, "SplashUi.kt: использованные классы импортированы", str(leaked))
 
     logo = LOGO_KT.read_text()
     ok, why = balanced(logo)
@@ -268,6 +317,9 @@ def test_kotlin() -> None:
           str(logo.count("animateTo(")))
     check("BitmapFactory.decodeResource" in logo, "PNG читается через BitmapFactory")
     check("bitmap.recycle()" in logo, "bitmap освобождается")
+    logo_leaked = unimported_classes(logo)
+    check(not logo_leaked, "MoonLogo.kt: использованные классы импортированы",
+          str(logo_leaked))
     for name in (text, logo):
         imports = set(re.findall(r"^import ([a-zA-Z0-9_.]+)$", name, re.M))
         foreign = sorted(i for i in imports
