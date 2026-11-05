@@ -147,13 +147,21 @@ internal object MacroRunner {
     /** «Открыть чат» в мире — клавиша T (GLFW 84). */
     private const val CHAT_KEY = 84
 
-    /** Предел одного запуска: даже 32 шага с большими паузами не висят вечно. */
-    private const val MAX_RUN_MS = 120_000L
+    /**
+     * Предел одного запуска. Шаги и паузы уже ограничены, поэтому макрос конечен
+     * и без него; предел покрывает худший случай редактора (32 шага по 60 с плюс
+     * нажатия), чтобы длинный макрос не обрывался молча на середине.
+     */
+    private val MAX_RUN_MS = Macros.MAX_STEPS * (Macros.MAX_DELAY + 1_000L)
 
     private val state = mutableStateOf<String?>(null)
+    private val noteState = mutableStateOf<String?>(null)
 
     /** Название выполняемого макроса; null — сейчас ничего не идёт. */
     val running: String? get() = state.value
+
+    /** Что сказать о прошедшем запуске (пропущенный шаг, предел времени); null — без замечаний. */
+    val note: String? get() = noteState.value
 
     @Volatile private var cancelled = false
     @Volatile private var worker: Thread? = null
@@ -164,6 +172,7 @@ internal object MacroRunner {
         if (worker?.isAlive == true) return "уже выполняется: ${running ?: "макрос"}"
         if (macro.steps.isEmpty()) return "в макросе нет шагов"
         cancelled = false
+        noteState.value = null
         state.value = macro.name
         val thread = Thread({ execute(macro) }, "moonmc-macro")
         thread.isDaemon = true
@@ -182,7 +191,11 @@ internal object MacroRunner {
         val deadline = System.currentTimeMillis() + MAX_RUN_MS
         try {
             for (step in macro.steps) {
-                if (cancelled || System.currentTimeMillis() > deadline) break
+                if (cancelled) break
+                if (System.currentTimeMillis() > deadline) {
+                    noteState.value = "макрос остановлен: прошёл предел ${MAX_RUN_MS / 1000} с"
+                    break
+                }
                 when (step.kind) {
                     MacroStep.Kind.Delay -> pause(step.millis)
                     MacroStep.Kind.Key -> tap(step.code)
@@ -227,6 +240,13 @@ internal object MacroRunner {
     private fun send(text: String) {
         val body = text.trim().take(Macros.MAX_TEXT)
         if (body.isEmpty()) return
+        // Чат открывает T, но только в мире: на титульном экране и в меню тот же
+        // текст ушёл бы в чужое поле (имя/адрес сервера), а в уже открытом чате
+        // «T» стала бы буквой сообщения. Такой шаг честно пропускаем.
+        if (Native.inMenu()) {
+            noteState.value = "текст пропущен: нужен мир, а открыт экран/меню игры"
+            return
+        }
         tap(CHAT_KEY)
         // Чат открывается в кадре движка: без паузы текст попал бы в мир.
         pause(320)

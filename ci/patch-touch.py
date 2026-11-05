@@ -12,6 +12,7 @@ registers it as a module and teaches `game/touch.rs` to read a profile:
 Everything is anchored on exact source text and fails loudly if the pin moved.
 """
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(".")
@@ -72,6 +73,33 @@ def replace(text: str, old: str, new: str, what: str) -> str:
         ERRORS.append(f"{what}: якорь не уникален ({text.count(old)})")
         return text
     return text.replace(old, new, 1)
+
+
+def jni_sections(block: str) -> list[str]:
+    """Делит JNI-блок на отдельные функции: каждая идёт после `#[allow(unsafe_code)]`."""
+    return [
+        part
+        for part in re.split(r"(?m)^(?=#\[allow\(unsafe_code\)\])", block.strip("\n"))
+        if part.strip()
+    ]
+
+
+def add_jni(root: str, block: str) -> tuple[str, list[str]]:
+    """Добавляет недостающие JNI-функции по одной и отдаёт их имена.
+
+    Блок целиком годится только для чистого дерева: в дереве, пропатченном
+    прошлой версией, новых точек входа (`textNative`) иначе бы не появилось,
+    и Kotlin получал бы `UnsatisfiedLinkError` в рантайме вместо текста.
+    Пофункциональная вставка заодно остаётся побайтно идемпотентной.
+    """
+    added: list[str] = []
+    for section in jni_sections(block):
+        name = re.search(r"fn (Java_dev_moonmc_game_Native_\w+)", section)
+        if not name or name.group(1) in root:
+            continue
+        root = root.rstrip("\n") + "\n\n" + section.strip("\n") + "\n"
+        added.append(name.group(1))
+    return root, added
 
 
 def main() -> None:
@@ -135,7 +163,7 @@ def main() -> None:
             if anchor:
                 root = root.replace(anchor, anchor + "\nmod moon_input;", 1)
                 ROOT.write_text(root)
-                jni = """
+        jni = """
 
 // MoonMC: JNI-точки входа из Compose-слоя управления (см. moon_input).
 #[allow(unsafe_code)]
@@ -295,10 +323,12 @@ pub extern "system" fn Java_dev_moonmc_game_Native_textNative(
     horizon_client::event_loop::push_typed(horizon_client::event_loop::Typed::Text(text));
 }
 """
-                if "Java_dev_moonmc_game_Native_keyDown" not in root:
-                    root = root + jni
-                    ROOT.write_text(root)
-                print("android.rs: JNI-функции моста добавлены")
+        root, added = add_jni(root, jni)
+        if added:
+            ROOT.write_text(root)
+        print("android.rs: JNI-функции моста: " + (", ".join(added) if added else "уже на месте"))
+        if "Java_dev_moonmc_game_Native_textNative" not in root:
+            ERRORS.append("android.rs: нет textNative — текст макроса молча не дойдёт до игры")
 
     # разбор очереди в кадре тач-слоя: протокол координат общий со слоем
     text = TOUCH.read_text()

@@ -1293,7 +1293,8 @@ object Overlay {
             Button(onClick = { editing = Macro(name = "") }, modifier = Modifier.fillMaxWidth()) {
                 Text("Новый макрос")
             }
-            note?.let {
+            // Своё сообщение о сохранении важнее отчёта последнего запуска.
+            (note ?: MacroRunner.note)?.let {
                 Text(it, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text(
@@ -1508,7 +1509,7 @@ object Overlay {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "${index + 1}. " + when (step.kind) {
-                            MacroStep.Kind.Text -> "текст в чат"
+                            MacroStep.Kind.Text -> "текст в чат (в мире)"
                             MacroStep.Kind.Key -> "клавиша"
                             MacroStep.Kind.Delay -> "пауза"
                         },
