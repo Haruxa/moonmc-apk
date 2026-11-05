@@ -54,7 +54,8 @@ NEW_STATUS = '''    private MoonSplash splash;
                 return;
             }
             preparing = true;
-            if (splash == null) {
+            // Заставка обычного запуска могла уже уйти сама — тогда показываем снова.
+            if (splash == null || !splash.isShowing()) {
                 splash = new MoonSplash(this);
                 splash.show();
             }
@@ -66,7 +67,7 @@ NEW_STATUS = '''    private MoonSplash splash;
     @Override
     protected void onResume() {
         super.onResume();
-        if (preparing && splash == null && !isFinishing()) {
+        if (preparing && (splash == null || !splash.isShowing()) && !isFinishing()) {
             splash = new MoonSplash(this);
             splash.show();
             splash.step("Preparing the game…");
@@ -114,6 +115,20 @@ NEW_HIDE_BRANCH = '''            } else {
                 input.clearFocus();
                 input.setFocusable(false);
             }'''
+
+# Обычный запуск (не первая подготовка): пока грузится игра, виден экран со знаком.
+# Диалог ничего не блокирует — касания и фокус остаются игре, — а после анимации
+# MoonSplash закрывается сам (STARTUP_MS). Без Compose (сборка aapt2) не показывается.
+STARTUP_SPLASH = '''    /** MoonMC: обычный запуск — знак собирается, пока грузится игра. */
+    private void showStartupSplash() {
+        if (preparing || (splash != null && splash.isShowing())) {
+            return;
+        }
+        splash = new MoonSplash(this, true);
+        splash.showStartup();
+    }
+
+'''
 
 # Отложенное закрытие IME живёт в самом поле: так его можно отменить, если поле
 # открыли заново (reset) или игра сама закрыла чат.
@@ -658,6 +673,29 @@ def main() -> int:
             die("HorizonActivity.java: остались упоминания MargyMC")
         pathlib.Path(ACTIVITY).write_text(code)
         print("экран загрузки: AlertDialog MargyMC -> MoonSplash MoonMC")
+
+    # 8. Обычный запуск: заставка со знаком MoonMC, пока грузится игра. Заставка
+    # первой подготовки остаётся отдельной: её держит showStatus до конца распаковки.
+    # Идёт после блока выше: метод showStartupSplash встаёт рядом с showStatus.
+    if "showStartupSplash" not in code:
+        status_javadoc = (
+            "    /** Called by the first start's preparing: its step on the MoonMC screen. */"
+        )
+        on_create_anchor = "        super.onCreate(state);\n"
+        if status_javadoc not in code or on_create_anchor not in code:
+            print("::warning::экран загрузки: не нашёл showStatus/onCreate для заставки запуска")
+        else:
+            code = code.replace(status_javadoc, STARTUP_SPLASH + status_javadoc, 1)
+            # Окно ещё не показано в onCreate — заставку просим после первого кадра.
+            code = code.replace(
+                on_create_anchor,
+                on_create_anchor
+                + "        // MoonMC: знак собирается до первого кадра игры.\n"
+                + "        getWindow().getDecorView().post(this::showStartupSplash);\n",
+                1,
+            )
+            pathlib.Path(ACTIVITY).write_text(code, encoding="utf-8")
+            print("экран загрузки: заставка показывается и при обычном запуске")
 
     # 5. Клавиатура: отправка с отложенным и отменяемым закрытием (ввод — как в нарезке).
     if "hideLater" not in code:

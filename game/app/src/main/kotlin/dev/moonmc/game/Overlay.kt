@@ -462,11 +462,23 @@ object Overlay {
         return x >= left && x <= screenPx - panelEndGap && y >= top && y <= top + panelPy
     }
 
-    /** Material 3 Expressive: цвета из системы (Android 12+), иначе фирменная схема Moon. */
+    /** Material 3 Expressive: цвета из системы (Android 12+), иначе фирменная схема Moon.
+     *  followSystem — брать светлую или тёмную системную схему по ночному режиму
+     *  (так делает экран запуска); сам слой игры остаётся тёмным. */
     @Composable
-    internal fun MoonTheme(context: android.content.Context, content: @Composable () -> Unit) {
+    internal fun MoonTheme(
+        context: android.content.Context,
+        followSystem: Boolean = false,
+        content: @Composable () -> Unit,
+    ) {
+        val nightMode = context.resources.configuration.uiMode and
+            android.content.res.Configuration.UI_MODE_NIGHT_MASK
+        val dark = !followSystem ||
+            nightMode == android.content.res.Configuration.UI_MODE_NIGHT_YES
         val scheme = if (android.os.Build.VERSION.SDK_INT >= 31) {
-            runCatching { dynamicDarkColorScheme(context) }.getOrNull()
+            runCatching {
+                if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            }.getOrNull()
         } else {
             null
         } ?: darkColorScheme(
