@@ -1247,8 +1247,19 @@ object Overlay {
     private fun ProfilesTab() {
         var profiles by remember { mutableStateOf(readProfiles()) }
         var input by remember { mutableStateOf("") }
+        // Ник берём у самой игры, а не из accounts.json: файл знает лишь, что выбрал
+        // игрок, а в мире он может играть под другим ником (или файл правили руками).
         var current by remember { mutableStateOf(runCatching { Native.accountName() }.getOrDefault("")) }
         var pendingDelete by remember { mutableStateOf<String?>(null) }
+
+        // Вкладка открыта — опрашиваем игру: вход в мир и смена ника видны сразу.
+        LaunchedEffect(Unit) {
+            while (true) {
+                val now = runCatching { Native.accountName() }.getOrDefault("")
+                if (now != current) current = now
+                kotlinx.coroutines.delay(250)
+            }
+        }
 
         fun store(next: Profiles) {
             profiles = next
@@ -1274,12 +1285,21 @@ object Overlay {
             },
             modifier = Modifier.fillMaxWidth(),
         )
+        Spacer(Modifier.height(8.dp))
+        // Источник истины — Native.accountName(); accounts.json.active только выбор.
+        Text(
+            "Текущий ник в Minecraft: ${current.ifBlank { "—" }}",
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 12.sp,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        )
         Spacer(Modifier.height(10.dp))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             items(profiles.list.sortedByDescending { if (it.pinned) 1 else 0 }, key = { it.name }) { profile ->
                 AccountRow(
                     profile = profile,
-                    active = profile.name == profiles.active,
+                    // Подсветка — по настоящему нику; пока его не знаем — по выбору в файле.
+                    active = profile.name == current.ifBlank { profiles.active },
                     onPick = {
                         Native.setAccount(profile.name)
                         current = profile.name
@@ -1309,7 +1329,7 @@ object Overlay {
             AlertDialog(
                 onDismissRequest = { pendingDelete = null },
                 title = { Text("Удалить аккаунт?") },
-                text = { Text("«$name» будет удалён из списка" + if (name == current) ", игрок останется текущим до следующего выбора." else ".") },
+                text = { Text("«$name» будет удалён из списка" + if (name == profiles.active) ", игрок останется текущим до следующего выбора." else ".") },
                 confirmButton = {
                     TextButton(onClick = {
                         store(

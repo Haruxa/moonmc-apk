@@ -265,7 +265,9 @@ NEW_REPORT = '''        /** MoonMC: закрыть клавиатуру чуть
 
 # Визуальные дубли: полный снимок текста со словом, которое клавиатура рисует сама
 # (extract/fullscreen-редактор в горизонтали), заставлял её рисовать это слово дважды.
-# Во время набора шлём только выделение, полный текст — когда составного слова уже нет.
+# Текст набрала сама клавиатура → ей хватает выделения; полный снимок уходит только
+# как ответ на getExtractedText. Проверено на v37: отправка снимка после commitText
+# (когда составного слова уже нет) всё равно копила «как делакак дел…».
 OLD_REPORT_BODY = '''        /** The keyboard's view of the editor: the selection and the word being composed as
          *  they are, so its own editor shows the text once (not "gag" for "ga"). */
         private void report() {
@@ -286,7 +288,6 @@ NEW_REPORT_BODY = '''        /** MoonMC: что уже отдано клавиа
         private int lastEnd = -1;
         private int lastComposingStart = -1;
         private int lastComposingEnd = -1;
-        private String lastExtracted;
 
         /** The keyboard's view of the editor: the selection and the word being composed as
          *  they are, so its own editor shows the text once (not "gag" for "ga"). */
@@ -298,9 +299,10 @@ NEW_REPORT_BODY = '''        /** MoonMC: что уже отдано клавиа
             int end = android.text.Selection.getSelectionEnd(editable);
             int composingStart = getComposingSpanStart(editable);
             int composingEnd = getComposingSpanEnd(editable);
-            // Слово в наборе клавиатура уже показывает сама: полный снимок с ним же
-            // заставлял её full-screen-редактор рисовать слово второй раз.
-            boolean composing = composingStart >= 0 && composingEnd > composingStart;
+            // Полный снимок назад клавиатуре не отдаём: текст набрала она сама, и её
+            // full-screen-бар приписывал присланное к своему — «как делакак дел…».
+            // Ей довольно выделения (и границ слова в наборе); полный текст уходит
+            // только в ответ на getExtractedText — когда она сама его просит.
             if (start != lastStart || end != lastEnd
                 || composingStart != lastComposingStart || composingEnd != lastComposingEnd) {
                 lastStart = start;
@@ -308,13 +310,6 @@ NEW_REPORT_BODY = '''        /** MoonMC: что уже отдано клавиа
                 lastComposingStart = composingStart;
                 lastComposingEnd = composingEnd;
                 imm.updateSelection(view, start, end, composingStart, composingEnd);
-            }
-            if (monitor >= 0 && !composing) {
-                String now = editable.toString();
-                if (!now.equals(lastExtracted)) {
-                    lastExtracted = now;
-                    imm.updateExtractedText(view, monitor, extracted());
-                }
             }
         }'''
 
