@@ -263,11 +263,15 @@ NEW_REPORT = '''        /** MoonMC: закрыть клавиатуру чуть
 
         private ExtractedText extracted() {'''
 
-# Визуальные дубли: полный снимок текста со словом, которое клавиатура рисует сама
-# (extract/fullscreen-редактор в горизонтали), заставлял её рисовать это слово дважды.
-# Текст набрала сама клавиатура → ей хватает выделения; полный снимок уходит только
-# как ответ на getExtractedText. Проверено на v37: отправка снимка после commitText
-# (когда составного слова уже нет) всё равно копила «как делакак дел…».
+# extract/fullscreen-редактор клавиатуры (горизонталь) текст сам не набирает: он
+# показывает ровно то, что прислал снимок (AOSP InputMethodService.onUpdateExtractedText
+# -> ExtractEditText.setExtractedText). Без updateExtractedText поле остаётся пустым.
+# Дубли («как делакак дел…») давали не снимки, а незаполненные partial-поля: у свежего
+# ExtractedText partialStartOffset/partialEndOffset = 0, а TextView.setExtractedText при
+# partialStartOffset >= 0 считает снимок частичной заменой диапазона и вставляет его
+# внутрь собственного буфера. Весь текст обязан помечаться -1/-1 (см. extracted()):
+# тогда setExtractedText заменяет содержимое целиком, а повтор того же снимка ничего не
+# меняет. Поэтому снимок уходит на каждое изменение текста — но один раз на состояние.
 OLD_REPORT_BODY = '''        /** The keyboard's view of the editor: the selection and the word being composed as
          *  they are, so its own editor shows the text once (not "gag" for "ga"). */
         private void report() {
@@ -283,7 +287,9 @@ OLD_REPORT_BODY = '''        /** The keyboard's view of the editor: the selectio
             }
         }'''
 
-NEW_REPORT_BODY = '''        /** MoonMC: что уже отдано клавиатуре: одинаковое состояние не шлём дважды. */
+# Что ставил предыдущий патч (v37): только updateSelection, снимка нет — из-за этого
+# fullscreen-поле и стало пустым. Нужно только для миграции уже пропатченных деревьев.
+PREV_REPORT_BODY = '''        /** MoonMC: что уже отдано клавиатуре: одинаковое состояние не шлём дважды. */
         private int lastStart = -1;
         private int lastEnd = -1;
         private int lastComposingStart = -1;
@@ -311,6 +317,80 @@ NEW_REPORT_BODY = '''        /** MoonMC: что уже отдано клавиа
                 lastComposingEnd = composingEnd;
                 imm.updateSelection(view, start, end, composingStart, composingEnd);
             }
+        }'''
+
+NEW_REPORT_BODY = '''        /** MoonMC: что уже отдано клавиатуре: одинаковое состояние не шлём дважды. */
+        private int lastStart = -1;
+        private int lastEnd = -1;
+        private int lastComposingStart = -1;
+        private int lastComposingEnd = -1;
+        /** MoonMC: снимок, уже отданный extract-редактору (сам текст в логи не пишем). */
+        private String lastExtracted = null;
+
+        /** The keyboard's view of the editor: the selection and the word being composed as
+         *  they are, so its own editor shows the text once (not "gag" for "ga"). */
+        private void report() {
+            InputMethodManager imm = (InputMethodManager) view.getContext()
+                .getSystemService(Context.INPUT_METHOD_SERVICE);
+            android.text.Editable editable = getEditable();
+            int start = android.text.Selection.getSelectionStart(editable);
+            int end = android.text.Selection.getSelectionEnd(editable);
+            int composingStart = getComposingSpanStart(editable);
+            int composingEnd = getComposingSpanEnd(editable);
+            String now = editable.toString();
+            boolean textChanged = !now.equals(lastExtracted);
+            if (textChanged || start != lastStart || end != lastEnd
+                || composingStart != lastComposingStart || composingEnd != lastComposingEnd) {
+                lastStart = start;
+                lastEnd = end;
+                lastComposingStart = composingStart;
+                lastComposingEnd = composingEnd;
+                imm.updateSelection(view, start, end, composingStart, composingEnd);
+            }
+            // Снимок нужен extract/fullscreen-редактору: свой текст он не набирает и
+            // без него остаётся пустым. Шлём только на изменение текста (partial-поля
+            // -1, см. extracted()) — повтор того же снимка ничего не добавляет.
+            if (textChanged && monitor >= 0) {
+                lastExtracted = now;
+                imm.updateExtractedText(view, monitor, extracted());
+            }
+        }'''
+
+# Снимок всего текста поля. partialStartOffset/partialEndOffset = -1 обязательны:
+# у свежего ExtractedText они 0, и AOSP TextView.setExtractedText при >= 0 считает
+# снимок частичной заменой и вставляет его в свой буфер — отсюда «как делакак дел…».
+OLD_EXTRACTED = '''        private ExtractedText extracted() {
+            android.text.Editable editable = getEditable();
+            ExtractedText text = new ExtractedText();
+            text.text = editable.toString();
+            text.startOffset = 0;
+            text.selectionStart = Math.max(0, android.text.Selection.getSelectionStart(editable));
+            text.selectionEnd = Math.max(0, android.text.Selection.getSelectionEnd(editable));
+            return text;
+        }'''
+
+NEW_EXTRACTED = '''        /** MoonMC: снимок всего текста поля для extract/fullscreen-редактора.
+         *  partialStartOffset/partialEndOffset = -1: это весь текст, а не частичная
+         *  замена диапазона; при >= 0 клавиатура склеивала снимок сама с собой. */
+        private ExtractedText extracted() {
+            android.text.Editable editable = getEditable();
+            ExtractedText text = new ExtractedText();
+            String now = editable.toString();
+            int length = now.length();
+            text.text = now;
+            text.startOffset = 0;
+            text.partialStartOffset = -1;
+            text.partialEndOffset = -1;
+            text.selectionStart =
+                clamp(android.text.Selection.getSelectionStart(editable), length);
+            text.selectionEnd =
+                clamp(android.text.Selection.getSelectionEnd(editable), length);
+            return text;
+        }
+
+        /** MoonMC: позиция выделения в границах снимка (-1 = выделения нет). */
+        private static int clamp(int position, int length) {
+            return position < 0 ? 0 : Math.min(position, length);
         }'''
 
 # Ввод не трогаем: в нарезке источник истины — Editable самого BaseInputConnection.
@@ -622,14 +702,27 @@ def main() -> int:
         pathlib.Path(ACTIVITY).write_text(code, encoding="utf-8")
         print("экран: backspace идёт через deleteSurroundingTextInCodePoints")
 
-    # 7. Отчёт клавиатуре: полный снимок со словом в наборе больше не дублирует его
-    # в extract/fullscreen-редакторе. Буфер, sync() и backspace остаются как в нарезке.
-    if "MoonMC: что уже отдано" not in code:
-        if OLD_REPORT_BODY not in code:
+    # 7. Отчёт клавиатуре: снимок всего текста с partial-полями -1 — extract/
+    # fullscreen-редактор показывает актуальный текст без склейки с самим собой.
+    # Буфер, sync(), backspace и отправка остаются как в нарезке.
+    if "lastExtracted" not in code:
+        if PREV_REPORT_BODY in code:
+            code = code.replace(PREV_REPORT_BODY, NEW_REPORT_BODY, 1)
+        elif OLD_REPORT_BODY in code:
+            code = code.replace(OLD_REPORT_BODY, NEW_REPORT_BODY, 1)
+        else:
             die("HorizonActivity.java: не нашёл report() для отчёта клавиатуре")
-        code = code.replace(OLD_REPORT_BODY, NEW_REPORT_BODY, 1)
         pathlib.Path(ACTIVITY).write_text(code, encoding="utf-8")
-        print("экран: отчёт клавиатуре без дублей составного текста")
+        print("экран: снимок текста уходит клавиатуре на каждое изменение")
+
+    # 7a. Снимок всего текста помечается как весь текст (-1/-1): иначе клавиатура
+    # вставляет его в свой буфер как частичную замену и текст дублируется.
+    if "partialStartOffset" not in code:
+        if OLD_EXTRACTED not in code:
+            die("HorizonActivity.java: не нашёл extracted() для снимка клавиатуре")
+        code = code.replace(OLD_EXTRACTED, NEW_EXTRACTED, 1)
+        pathlib.Path(ACTIVITY).write_text(code, encoding="utf-8")
+        print("экран: снимок клавиатуре помечен как весь текст (partial -1)")
     if not label or label.group(1) != LABEL:
         die("не удалось выставить android:label")
     return 0
