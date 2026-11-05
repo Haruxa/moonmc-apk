@@ -78,6 +78,8 @@ object Overlay {
     private const val LAYOUT_DIR = "touch/zalith"
     /** Файл-выключатель слоя управления (крайняя мера при крашах). */
     private const val LAYER_OFF = "moonmc-layer-off.txt"
+    /** Единый каталог отчётов: рядом с игрой, без отдельных txt в «Загрузках». */
+    private const val LOGS = "/sdcard/MoonMC/logs"
     private var dialog: Dialog? = null
     /** Открыта ли сейчас системная клавиатура (кнопка IME переключает). */
     private var imeShown = false
@@ -105,33 +107,20 @@ object Overlay {
     }
 
     /**
-     * Куда класть отчёты: папка "Загрузки" через MediaStore (доступна без разрешений
-     * и видна другим приложениям — иначе краш нечем диагностировать), потом папка игры.
+     * Куда класть отчёты: `/sdcard/MoonMC/logs` — рядом с игрой и без отдельных txt в
+     * «Загрузках». Папка создаётся сама; если писать в неё нечем (нет доступа ко всем
+     * файлам), отчёт уходит во внешнюю папку приложения, а не теряется.
      */
+    private fun logsDir(activity: Activity): File {
+        val public = File(LOGS)
+        if (public.isDirectory || public.mkdirs()) return public
+        val fallback = File(activity.getExternalFilesDir(null) ?: activity.filesDir, "logs")
+        fallback.mkdirs()
+        return fallback
+    }
+
     private fun report(activity: Activity, name: String, text: String) {
-        runCatching {
-            val resolver = activity.contentResolver
-            val downloads = android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
-            resolver.delete(
-                downloads,
-                "${android.provider.MediaStore.MediaColumns.DISPLAY_NAME}=?",
-                arrayOf(name),
-            )
-            val values = android.content.ContentValues().apply {
-                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
-                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
-                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Download")
-            }
-            val uri = resolver.insert(downloads, values)
-            if (uri != null) {
-                resolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
-            }
-        }
-        runCatching {
-            val dir = File("/sdcard/MoonMC/horizon")
-            dir.mkdirs()
-            File(dir, name).writeText(text)
-        }
+        runCatching { File(logsDir(activity), name).writeText(text) }
     }
 
     /** Отчёт по профилям управления — рядом с остальными отчётами. */
@@ -552,10 +541,12 @@ object Overlay {
         return null
     }
 
-    /** Отчёт о координатах тапов: один файл, обрезаем по размеру. */
+    /** Отчёт о координатах тапов: один файл в общем каталоге, обрезаем по размеру. */
     private fun touchReport(line: String) {
         runCatching {
-            val file = File("/sdcard/MoonMC/horizon", "moonmc-touch.txt")
+            val dir = File(LOGS)
+            dir.mkdirs()
+            val file = File(dir, "moonmc-touch.txt")
             if (file.length() > 16_384) file.delete()
             file.appendText(line + "\n")
         }

@@ -412,49 +412,30 @@ OVERLAY = '''        // MoonMC: любая необработанная ошиб
                 java.io.StringWriter text = new java.io.StringWriter();
                 error.printStackTrace(new java.io.PrintWriter(text));
                 String body = thread.getName() + "\\n" + text;
-                // Папка "Загрузки" через MediaStore: доступна без разрешений и видна
-                // другим приложениям (внешняя папка приложения для них закрыта).
-                try {
-                    android.content.ContentResolver resolver = getContentResolver();
-                    android.net.Uri downloads =
-                        android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI;
-                    resolver.delete(downloads,
-                        android.provider.MediaStore.MediaColumns.DISPLAY_NAME + "=?",
-                        new String[] {"moonmc-crash.txt"});
-                    android.content.ContentValues values = new android.content.ContentValues();
-                    values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME,
-                        "moonmc-crash.txt");
-                    values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain");
-                    values.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Download");
-                    android.net.Uri uri = resolver.insert(downloads, values);
-                    if (uri != null) {
-                        java.io.OutputStream out = resolver.openOutputStream(uri);
-                        if (out != null) {
-                            out.write(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                            out.close();
-                        }
-                    }
-                } catch (Throwable ignoredMedia) {
-                    // нет доступа к MediaStore — пробуем остальное
-                }
-                // Папка игры — когда разрешение на файлы уже выдано.
+                // Единый каталог отчётов: /sdcard/MoonMC/logs — без отдельных txt в
+                // «Загрузках». Папка создаётся сама (mkdirs), а при отказе доступа
+                // отчёт уходит во внешнюю папку приложения.
                 boolean written = false;
-                java.io.File game = new java.io.File("/sdcard/MoonMC/horizon");
-                if (game.mkdirs() || game.isDirectory()) {
+                java.io.File logs = new java.io.File("/sdcard/MoonMC/logs");
+                if (logs.mkdirs() || logs.isDirectory()) {
                     try (java.io.FileWriter out =
-                             new java.io.FileWriter(new java.io.File(game, "moonmc-crash.txt"))) {
+                             new java.io.FileWriter(new java.io.File(logs, "moonmc-crash.txt"))) {
                         out.write(body);
                         written = true;
-                    } catch (Throwable ignoredCopy) {
+                    } catch (Throwable ignoredLogs) {
+                        // писать в общий каталог нечем — пробуем папку приложения
                     }
                 }
                 if (!written) {
                     java.io.File dir = getExternalFilesDir(null);
                     if (dir != null) {
-                        dir.mkdirs();
+                        java.io.File logs = new java.io.File(dir, "logs");
+                        logs.mkdirs();
                         try (java.io.FileWriter out =
-                                 new java.io.FileWriter(new java.io.File(dir, "moonmc-crash.txt"))) {
+                                 new java.io.FileWriter(new java.io.File(logs, "moonmc-crash.txt"))) {
                             out.write(body);
+                        } catch (Throwable ignoredCopy) {
+                            // писать некуда — молчим
                         }
                     }
                 }

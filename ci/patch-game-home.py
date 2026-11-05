@@ -413,11 +413,13 @@ fn report_jre(home: &Path, jre: &Path) {
         )),
         Err(e) => report.push_str(&format!("run: error {e} (kind {:?})\\n", e.kind())),
     }
-    let public = std::path::Path::new("/sdcard/MoonMC/horizon");
-    if std::fs::create_dir_all(public).is_ok() {
-        let _ = std::fs::write(public.join("moonmc-jre.txt"), &report);
+    let logs = std::path::Path::new("/sdcard/MoonMC/logs");
+    let written = std::fs::create_dir_all(logs).is_ok()
+        && std::fs::write(logs.join("moonmc-jre.txt"), &report).is_ok();
+    // Общий каталог отчётов — /sdcard/MoonMC/logs; иначе приватная папка игры.
+    if !written {
+        let _ = std::fs::write(home.join("moonmc-jre.txt"), &report);
     }
-    let _ = std::fs::write(home.join("moonmc-jre.txt"), &report);
     if let Ok(mut slot) = JRE_REPORT.lock() {
         *slot = report;
     }
@@ -534,11 +536,12 @@ fn moon_resources_ready(resources: &Path) -> bool {
     moon_probe(resources).is_none() && moon_marker(resources).is_file()
 }
 
-/// Строка диагностики подготовки: в /sdcard рядом с игрой, иначе в приватную папку.
+/// Строка диагностики подготовки: в общий каталог /sdcard/MoonMC/logs, иначе в
+/// приватную папку игры.
 fn moon_setup_log(home: &Path, text: &str) {
-    let public = std::path::Path::new("/sdcard/MoonMC/horizon");
-    let _ = std::fs::create_dir_all(public);
-    let file = public.join("moonmc-setup.txt");
+    let logs = std::path::Path::new("/sdcard/MoonMC/logs");
+    let _ = std::fs::create_dir_all(logs);
+    let file = logs.join("moonmc-setup.txt");
     let mut body = std::fs::read_to_string(&file).unwrap_or_default();
     if body.len() > 32_768 {
         body.clear();
@@ -837,6 +840,7 @@ def main() -> int:
         return 1
     print(
         "MoonMC-CI v4: папка игры /sdcard/MoonMC/horizon, JRE и tmp — в приватном хранилище,"
+        " отчёты — /sdcard/MoonMC/logs,"
         " файловые локи FUSE (flock) не считаются занятостью мира и не глушат latest.log"
     )
     return 0
