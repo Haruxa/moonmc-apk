@@ -10,12 +10,13 @@
 2. PNG доходит до `android/res` в обеих сборках: patch-branding копирует
    `ci/branding/**` в `android/res/**` (Gradle-шаг CI копирует этот res в
    `game/app/src/main/res`), а `SplashUi.kt` ищет drawable по имени, без R.
-3. Kotlin/Java-тексты: экран не теряет ни шаг подготовки, ни `createHost`, ни
-   текстовый fallback для aapt2-сборки; анимация одноразовая (LaunchedEffect,
+3. Kotlin/Java-тексты: экран подготовки не теряет ни шаг подготовки, ни `createHost`,
+   ни текстовый fallback для aapt2-сборки; анимация знака живёт в `MoonLogo.kt`
+   (тетрис -> радужная змейка -> Material-тинт), одноразовая (LaunchedEffect,
    без бесконечных переходов вокруг знака) и без новых зависимостей.
-4. Патчер на копии `ci/port/port.tgz` (как в CI): заставка подключается и к
-   обычному запуску, подготовка (`showStatus`) не ломается, повторный прогон
-   не меняет ни байта.
+4. Патчер на копии `ci/port/port.tgz` (как в CI): обычный запуск больше не получает
+   полноэкранного интро (`showStartupSplash` не инжектируется), подготовка
+   (`showStatus`) не ломается, повторный прогон не меняет ни байта.
 
 Компиляцию Kotlin/Java не заменяет: kotlinc/javac и Android SDK в Termux нет.
 
@@ -40,6 +41,7 @@ ICON = pathlib.Path("/sdcard/Download/иконки/Лаунчер.png")
 LOGO = HERE / "branding" / "drawable-nodpi" / "splash_moon.png"
 SPLASH_KT = HERE / "splash" / "SplashUi.kt"
 SPLASH_JAVA = HERE / "splash" / "MoonSplash.java"
+LOGO_KT = REPO / "game/app/src/main/kotlin/dev/moonmc/game/MoonLogo.kt"
 OVERLAY = REPO / "game/app/src/main/kotlin/dev/moonmc/game/Overlay.kt"
 
 LOGO_NAME = "splash_moon"
@@ -241,43 +243,50 @@ def test_kotlin() -> None:
     print("2. Kotlin-экран: шаги, знак, одноразовая анимация")
     text = SPLASH_KT.read_text()
     ok, why = balanced(text)
-    check(ok, "скобки/кавычки сбалансированы", why)
-    check(f'LOGO_RESOURCE = "{LOGO_NAME}"' in text, f"drawable по имени {LOGO_NAME}")
-    check("getIdentifier(LOGO_RESOURCE" in text, "ресурс ищется без R (обе сборки)")
+    check(ok, "SplashUi.kt: скобки/кавычки сбалансированы", why)
     check(text.count("fun step(text: String)") == 1, "SplashUi.step на месте")
     check("fun createHost(context: Context): View" in text, "SplashUi.createHost на месте")
     check("currentStep.collectAsState()" in text, "шаг подготовки показывается")
-    check("LaunchedEffect(glyph)" in text, "анимация знака — один прогон на композицию")
-    check("RememberInfiniteTransition" not in text or "rememberInfiniteTransition(label = \"splash\")" in text,
-          "бесконечный переход только у звёзд")
-    logo_block = text[text.find("private fun MoonLogo"):]
-    for marker in ("Animatable", "lerp(glyph.ink, target, tint.value)",
-                   "rainbow[rainbowIndex]", "drawRect("):
-        check(marker in logo_block, f"знак: {marker}")
-    check("BitmapFactory.decodeResource" in logo_block or
-          "BitmapFactory.decodeResource" in text, "PNG читается через BitmapFactory")
-    check("bitmap.recycle()" in text, "bitmap освобождается")
+    check("rememberMoonGlyph(context)" in text, "знак берётся из общего MoonLogo.kt")
+    check("MoonLogo(glyph, Modifier.fillMaxSize())" in text, "знак рисует MoonLogo")
     check("contentDescription = \"MoonMC logo\"" in text, "у знака есть описание")
     check("liveRegion = LiveRegionMode.Polite" in text, "шаг объявляется диктором")
-    imports = set(re.findall(r"^import ([a-zA-Z0-9_.]+)$", text, re.M))
-    foreign = sorted(i for i in imports
-                     if not i.startswith(("android.", "androidx.", "kotlin.", "kotlinx.")))
-    check(not foreign, "без новых зависимостей", str(foreign))
-    check("androidx.compose.material3" in text, "тема Material 3")
+    check("rememberInfiniteTransition(label = \"splash\")" in text,
+          "бесконечный переход только у звёзд")
+    check("Text(\"☾\"" in text, "без PNG остаётся глиф")
+
+    logo = LOGO_KT.read_text()
+    ok, why = balanced(logo)
+    check(ok, "MoonLogo.kt: скобки/кавычки сбалансированы", why)
+    check(f'LOGO_RESOURCE = "{LOGO_NAME}"' in logo, f"drawable по имени {LOGO_NAME}")
+    check("getIdentifier(LOGO_RESOURCE" in logo, "ресурс ищется без R (обе сборки)")
+    check("LaunchedEffect(glyph)" in logo, "анимация знака — один прогон на композицию")
+    for marker in ("Animatable", "lerp(glyph.ink, target, tint.value)",
+                   "rainbow[rainbowIndex]", "drawRect("):
+        check(marker in logo, f"знак: {marker}")
+    check(logo.count("animateTo(") == 3, "фазы: тетрис, змейка, тинт",
+          str(logo.count("animateTo(")))
+    check("BitmapFactory.decodeResource" in logo, "PNG читается через BitmapFactory")
+    check("bitmap.recycle()" in logo, "bitmap освобождается")
+    for name in (text, logo):
+        imports = set(re.findall(r"^import ([a-zA-Z0-9_.]+)$", name, re.M))
+        foreign = sorted(i for i in imports
+                         if not i.startswith(("android.", "androidx.", "kotlin.", "kotlinx.")))
+        check(not foreign, "без новых зависимостей", str(foreign))
+    check("androidx.compose.material3" in logo, "тема Material 3")
 
 
 def test_java_and_theme() -> None:
-    print("3. Java-хост и тема: fallback + dynamic light/dark")
+    print("3. Java-хост, theme и LoadingScreen: интро нет, анимация внутри оверлея")
     java = SPLASH_JAVA.read_text()
     ok, why = balanced(java)
     check(ok, "MoonSplash.java: скобки сбалансированы", why)
     check("class MoonSplash extends Dialog" in java, "диалог на месте")
     check("fallback.setText(\"MoonMC\\n\\n\"" in java, "текстовый fallback для aapt2")
     check("void step(String text)" in java, "шаг подготовки проходит и в fallback")
-    check("void showStartup()" in java, "заставка обычного запуска")
-    check("FLAG_NOT_TOUCHABLE" in java and "FLAG_NOT_FOCUSABLE" in java,
-          "заставка запуска не перехватывает касания")
-    check("handler.removeCallbacks(autoFinish)" in java, "автоскрытие отменяется подготовкой")
+    check("showStartup" not in java, "обычного startup-режима больше нет")
+    check("STARTUP_MS" not in java and "FLAG_NOT_TOUCHABLE" not in java,
+          "нет автоскрытия и невидимого окна запуска")
     check("void finishQuietly()" in java, "закрытие без исключения")
     check("getMethod(\"createHost\", Context.class)" in java, "рефлексия на SplashUi сохранена")
 
@@ -287,7 +296,16 @@ def test_java_and_theme() -> None:
     check("dynamicDarkColorScheme(context)" in overlay, "MoonTheme: dynamicDark")
     check("darkColorScheme(" in overlay, "MoonTheme: фирменный fallback")
     check("Overlay.MoonTheme(context, followSystem = true)" in SPLASH_KT.read_text(),
-          "экран запуска берёт тему по системе")
+          "экран подготовки берёт тему по системе")
+    loading = overlay[overlay.find("private fun LoadingScreen()"):]
+    loading = loading[:loading.find("private fun Panel(")]
+    check("rememberMoonGlyph(context)" in loading, "LoadingScreen читает сетку знака")
+    check("MoonLogo(glyph" in loading, "LoadingScreen рисует анимацию знака")
+    check("aspectRatio(" in loading, "пропорции сетки не искажаются")
+    check("loadingLogo(" not in overlay and "ColorFilter.tint" not in overlay,
+          "статичной Image splash_moon больше нет")
+    check("Text(\"☾\"" in loading, "без PNG остаётся глиф")
+    check("LoadingScreen()" in overlay, "LoadingScreen вызывается оверлеем")
 
 
 def run(script: pathlib.Path, cwd: pathlib.Path) -> subprocess.CompletedProcess:
@@ -305,7 +323,7 @@ def digest(base: pathlib.Path) -> str:
 
 
 def test_patch(root: pathlib.Path) -> None:
-    print("4. Патчер: подключение к обычному запуску и идемпотентность")
+    print("4. Патчер: интро нет, подготовка цела, идемпотентность")
     port = root / "main" / "port"
     port.mkdir(parents=True)
     with tarfile.open(TGZ) as tar:
@@ -321,24 +339,27 @@ def test_patch(root: pathlib.Path) -> None:
     activity = activity_path.read_text()
     ok, why = balanced(activity)
     check(ok, "HorizonActivity.java: скобки сбалансированы", why)
-    check("private void showStartupSplash()" in activity, "метод заставки добавлен")
-    check("getWindow().getDecorView().post(this::showStartupSplash);" in activity,
-          "заставка показывается при обычном запуске")
-    check("new MoonSplash(this, true)" in activity, "заставка запуска — с автоскрытием")
+    check("private void showStartupSplash()" not in activity, "startup-интро не добавлено")
+    check("showStartupSplash" not in activity, "showStartupSplash не инжектируется",
+          str(activity.count("showStartupSplash")))
+    check("new MoonSplash(this, true)" not in activity, "нет заставки запуска с автоскрытием")
+    check("post(this::showStartupSplash)" not in activity, "нет показа после первого кадра")
     check("splash == null || !splash.isShowing()" in activity,
           "ушедшая заставка не считается показанной")
     check("public void showStatus(final String text)" in activity, "шаг подготовки на месте")
-    check(activity.count("showStartupSplash") == 2,
-          "заставка запуска: метод и один вызов", str(activity.count("showStartupSplash")))
+    check("new MoonSplash(this)" in activity, "подготовка показывает MoonSplash")
     check("MoonSplash splash;" in activity, "поле диалога на месте")
 
     splash_java = port / "android/java/cat/narezany/horizon/MoonSplash.java"
     check(splash_java.is_file(), "MoonSplash.java скопирован в android/java")
     if splash_java.is_file():
-        check("void showStartup()" in splash_java.read_text(), "showStartup в дереве")
+        splash_tree = splash_java.read_text()
+        check("void showStartup()" not in splash_tree, "showStartup нет в дереве")
+        check("void step(String text)" in splash_tree, "шаг подготовки остался в дереве")
     kt_copy = root / "main" / "game/app/src/main/kotlin/dev/moonmc/game/SplashUi.kt"
     check(kt_copy.is_file() and "MoonLogo" in kt_copy.read_text(),
           "SplashUi.kt скопирован в Gradle-модуль")
+    check(LOGO_KT.is_file(), "MoonLogo.kt лежит в Gradle-модуле репозитория")
     logo = port / "android/res/drawable-nodpi" / f"{LOGO_NAME}.png"
     check(logo.is_file(), f"android/res/drawable-nodpi/{LOGO_NAME}.png")
     if logo.is_file():

@@ -116,20 +116,8 @@ NEW_HIDE_BRANCH = '''            } else {
                 input.setFocusable(false);
             }'''
 
-# Обычный запуск (не первая подготовка): пока грузится игра, виден экран со знаком.
-# Диалог ничего не блокирует — касания и фокус остаются игре, — а после анимации
-# MoonSplash закрывается сам (STARTUP_MS). Без Compose (сборка aapt2) не показывается.
-STARTUP_SPLASH = '''    /** MoonMC: обычный запуск — знак собирается, пока грузится игра. */
-    private void showStartupSplash() {
-        if (preparing || (splash != null && splash.isShowing())) {
-            return;
-        }
-        splash = new MoonSplash(this, true);
-        splash.showStartup();
-    }
-
-'''
-
+# Обычный запуск ничего не показывает поверх игры: оверлей рисует свой LoadingScreen
+# с анимацией знака. Пустой блок ниже остался якорем для showStatus.
 # Отложенное закрытие IME живёт в самом поле: так его можно отменить, если поле
 # открыли заново (reset) или игра сама закрыла чат.
 OLD_RESET = '''        void reset() {
@@ -674,28 +662,25 @@ def main() -> int:
         pathlib.Path(ACTIVITY).write_text(code)
         print("экран загрузки: AlertDialog MargyMC -> MoonSplash MoonMC")
 
-    # 8. Обычный запуск: заставка со знаком MoonMC, пока грузится игра. Заставка
-    # первой подготовки остаётся отдельной: её держит showStatus до конца распаковки.
-    # Идёт после блока выше: метод showStartupSplash встаёт рядом с showStatus.
-    if "showStartupSplash" not in code:
-        status_javadoc = (
-            "    /** Called by the first start's preparing: its step on the MoonMC screen. */"
+    # 8. Обычный запуск ничего не показывает поверх игры: знак рисует LoadingScreen
+    # оверлея. Заставка первой подготовки остаётся отдельной: её держит showStatus
+    # до конца распаковки. Поэтому здесь только убираем следы прежнего интро.
+    if "showStartupSplash" in code:
+        code = re.sub(
+            r"[ \t]*// MoonMC: знак собирается до первого кадра игры\.\n"
+            r"[ \t]*getWindow\(\)\.getDecorView\(\)\.post\(this::showStartupSplash\);\n",
+            "",
+            code,
         )
-        on_create_anchor = "        super.onCreate(state);\n"
-        if status_javadoc not in code or on_create_anchor not in code:
-            print("::warning::экран загрузки: не нашёл showStatus/onCreate для заставки запуска")
-        else:
-            code = code.replace(status_javadoc, STARTUP_SPLASH + status_javadoc, 1)
-            # Окно ещё не показано в onCreate — заставку просим после первого кадра.
-            code = code.replace(
-                on_create_anchor,
-                on_create_anchor
-                + "        // MoonMC: знак собирается до первого кадра игры.\n"
-                + "        getWindow().getDecorView().post(this::showStartupSplash);\n",
-                1,
-            )
-            pathlib.Path(ACTIVITY).write_text(code, encoding="utf-8")
-            print("экран загрузки: заставка показывается и при обычном запуске")
+        code = re.sub(
+            r"[ \t]*/\*\* MoonMC: обычный запуск — знак собирается, пока грузится игра\. \*/\n"
+            r"[ \t]*private void showStartupSplash\(\) \{\n"
+            r"(?:[ \t]*.*\n)*?[ \t]*\}\n\n",
+            "",
+            code,
+        )
+        pathlib.Path(ACTIVITY).write_text(code, encoding="utf-8")
+        print("экран загрузки: startup-интро удалено (знак — в LoadingScreen оверлея)")
 
     # 5. Клавиатура: отправка с отложенным и отменяемым закрытием (ввод — как в нарезке).
     if "hideLater" not in code:
