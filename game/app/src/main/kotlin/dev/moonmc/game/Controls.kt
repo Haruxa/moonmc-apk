@@ -9,7 +9,6 @@
 package dev.moonmc.game
 
 import android.app.Activity
-import com.movtery.inputmap.keycodes.ControlEventKeycode
 import com.movtery.layer_controller.data.ButtonPosition
 import com.movtery.layer_controller.data.ButtonSize
 import com.movtery.layer_controller.data.CenterPosition
@@ -23,14 +22,9 @@ import com.movtery.layer_controller.data.TextAlignment
 import com.movtery.layer_controller.data.TextData
 import com.movtery.layer_controller.data.VisibilityType
 import com.movtery.layer_controller.data.lang.createTranslatable
-import com.movtery.layer_controller.event.ClickEvent
-import com.movtery.layer_controller.layout.ControlLayout
-import com.movtery.layer_controller.layout.EmptyControlLayout
-import com.movtery.layer_controller.layout.createNewLayer
 import com.movtery.layer_controller.layout.loadLayoutFromString
 import com.movtery.layer_controller.layout.saveLayoutToString
 import com.movtery.layer_controller.observable.ObservableControlLayout
-import org.json.JSONObject
 import java.io.File
 
 /** Профили управления: список, выбор, создание, импорт Zalith/Pojav. */
@@ -164,159 +158,63 @@ object Controls {
         }
     }
 
-    /** Импорт чужого профиля: Zalith/LayerController JSON или Pojav controlmap. */
-    fun import(activity: Activity, file: File, name: String): String? {
-        val text = runCatching { file.readText() }.getOrNull() ?: return "Файл не читается"
-        if (text.isBlank()) return "Файл пустой"
-
-        val layout = when {
-            text.contains("\"editorVersion\"") -> runCatching {
-                ObservableControlLayout(loadLayoutFromString(text))
-            }.getOrNull() ?: return "Раскладка Zalith повреждена"
-            text.contains("mControlDataList") -> runCatching { fromPojav(text) }.getOrNull()
-                ?: return "Профиль Pojav повреждён"
-            else -> return "Неизвестный формат"
+    /**
+     * Импорт чужого профиля: Zalith/LayerController JSON или Pojav controlmap,
+     * в том числе из ZIP. Пустой или битый файл не записывается и не выбирается;
+     * существующее имя не перезаписывается — берётся свободное с суффиксом.
+     */
+    fun import(activity: Activity, source: File, name: String): ImportResult {
+        val metrics = activity.resources.displayMetrics
+        val read = ControlImport.read(source, metrics.widthPixels, metrics.heightPixels, metrics.density)
+        val layout = read.layout
+        if (read.error != null || layout == null) {
+            // Битый импорт ничего не пишет и не делает текущим.
+            Overlay.importNotes = read.warnings
+            return read
         }
-        val clean = safeName(name)
-        val target = if (clean == BUILTIN) BUILTIN + " import" else clean
-        return runCatching {
-            file(target).writeText(saveLayoutToString(layout.pack()))
-            setCurrent(target)
+        val target = uniqueName(name)
+        val text = runCatching { saveLayoutToString(layout.pack()) }.getOrElse { error ->
+            Overlay.reportControls(activity, "импорт «" + source.name + "»: " + error.stackTraceToString())
+            return ImportResult(error = "Раскладка не сохраняется: " + (error.message ?: "ошибка"))
+        }
+        if (file(target).exists()) {
+            return ImportResult(error = "Имя «" + target + "» уже занято")
+        }
+        val writeError = runCatching {
+            val tmp = File(dir(), target + ".json.tmp")
+            tmp.writeText(text)
+            if (!tmp.renameTo(file(target))) {
+                tmp.delete()
+                throw IllegalStateException("не удалось создать файл профиля")
+            }
             null
-        }.getOrElse { "Не записалось: " + it.message }
-    }
-
-    /* ----------------------------- Pojav ------------------------------ */
-
-    /** Код клавиши → имя события GLFW: таблица из самой библиотеки InputMap. */
-    private val codes: Map<Int, String> by lazy {
-        val map = HashMap<Int, String>(256)
-        runCatching {
-            ControlEventKeycode::class.java.fields.forEach { field ->
-                if (field.type != String::class.java) return@forEach
-                val name = runCatching { field.get(null) as? String }.getOrNull() ?: return@forEach
-                val code = runCatching { ControlEventKeycode.getKeycodeFromEvent(name) }.getOrNull()
-                    ?: return@forEach
-                map[code.toInt()] = name
-            }
+        }.getOrElse { error ->
+            Overlay.reportControls(activity, "импорт «" + source.name + "»: " + error.stackTraceToString())
+            error.message ?: "не записалось"
         }
-        map
-    }
-
-    /** Событие из кода Pojav: мышь — launcher_event, остальное — клавиша. */
-    fun event(code: Int): ClickEvent? {
-        val name = codes[code] ?: return null
-        val type = if (name.startsWith("GLFW_MOUSE_BUTTON")) {
-            ClickEvent.Type.LauncherEvent
-        } else {
-            ClickEvent.Type.Key
-        }
-        return ClickEvent(type, name)
-    }
-
-    /** Позиция Pojav (доли экрана или уже пиксели) → 0..10000. */
-    private fun position(obj: JSONObject): ButtonPosition {
-        val x = obj.optDouble("dynamicX", obj.optDouble("x", 0.0))
-        val y = obj.optDouble("dynamicY", obj.optDouble("y", 0.0))
-        fun toPercentage(value: Double, axis: Double): Int {
-            val fraction = if (value <= 1.0) value else value / axis.coerceAtLeast(1.0)
-            return (fraction.coerceIn(0.0, 1.0) * 10000.0).toInt()
-        }
-        return ButtonPosition(toPercentage(x, 1920.0), toPercentage(y, 1080.0))
-    }
-
-    /** Кнопка Pojav в терминах LayerController. */
-    private fun button(obj: JSONObject, index: Int): NormalData? {
-        val keys = obj.optJSONArray("keycodes") ?: return null
-        val events = ArrayList<ClickEvent>(2)
-        for (i in 0 until keys.length()) {
-            val pair = keys.optJSONArray(i) ?: continue
-            val code = if (pair.length() > 1) {
-                pair.optInt(1, Int.MIN_VALUE)
-            } else {
-                pair.optInt(0, Int.MIN_VALUE)
-            }
-            event(code)?.let { if (it !in events) events.add(it) }
-        }
-        if (events.isEmpty()) return null
-        val name = obj.optString("name", "").ifBlank { "Кнопка " + (index + 1) }
-        return NormalData(
-            text = createTranslatable(name),
-            uuid = newUuid(),
-            position = position(obj),
-            buttonSize = sizeOf(obj),
-            buttonStyle = null,
-            textAlignment = TextAlignment.Center,
-            textBold = false,
-            textItalic = false,
-            textUnderline = false,
-            visibilityType = VisibilityType.ALWAYS,
-            _clickEvents = events,
-            isSwipple = true,
-            isPenetrable = false,
-            isToggleable = false,
+        if (writeError != null) return ImportResult(error = "Не записалось: " + writeError)
+        setCurrent(target)
+        Overlay.importNotes = read.warnings
+        return ImportResult(
+            layout = layout,
+            profile = target,
+            summary = read.summary,
+            warnings = read.warnings,
         )
     }
 
-    /** Размер Pojav (dp) в наших единицах. */
-    private fun sizeOf(obj: JSONObject): ButtonSize {
-        val width = obj.optDouble("width", 50.0).toFloat()
-        val height = obj.optDouble("height", 50.0).toFloat()
-        val w = width.coerceIn(20f, 160f)
-        val h = height.coerceIn(20f, 160f)
-        return ButtonSize(
-            type = ButtonSize.Type.Dp,
-            widthDp = w,
-            heightDp = h,
-            widthPercentage = (w * 90f).toInt().coerceIn(1000, 6000),
-            heightPercentage = (h * 90f).toInt().coerceIn(1000, 6000),
-            widthReference = ButtonSize.Reference.ScreenHeight,
-            heightReference = ButtonSize.Reference.ScreenHeight,
-        )
-    }
-
-    /** Весь controlmap Pojav → одна раскладка с кнопками и стиком. */
-    private fun fromPojav(text: String): ObservableControlLayout {
-        val root = JSONObject(text)
-        val list = root.optJSONArray("mControlDataList")
-            ?: throw IllegalArgumentException("mControlDataList")
-        // Пустая раскладка библиотеки: дальше её наполняем тем же API, что редактор.
-        val layout = ObservableControlLayout(EmptyControlLayout)
-        val layer = layout.addLayer(createNewLayer("Pojav"))
-        var joystick: JoystickData? = null
-        val skipped = ArrayList<String>(4)
-        for (i in 0 until list.length()) {
-            val obj = list.optJSONObject(i) ?: continue
-            when (obj.optString("type", "")) {
-                "button" -> {
-                    val made = button(obj, i)
-                    if (made == null) skipped.add("кнопка #" + (i + 1)) else layer.addNormalButton(made)
-                }
-                "joystick" -> if (joystick == null) {
-                    joystick = JoystickData(
-                        uuid = newUuid(),
-                        position = position(obj),
-                        sizeType = ButtonSize.Type.Percentage,
-                        sizeDp = 160f,
-                        sizePercentage = 2600,
-                        visibilityType = VisibilityType.ALWAYS,
-                        joystickStyleId = null,
-                        deadZoneRatio = 0.12f,
-                        lockThreshold = 0.3f,
-                        canLock = true,
-                        triggerMode = JoystickTriggerMode.DRAG,
-                        directionEvents = DefaultDirectionEvents,
-                        lockEvents = DefaultLockEvents,
-                    )
-                } else {
-                    skipped.add("второй стик")
-                }
-                else -> skipped.add(obj.optString("type", "?"))
-            }
+    /**
+     * Свободное имя профиля: занятые имена не перезаписываем, добавляем суффикс.
+     * Встроенный профиль тоже не трогаем — импорт ложится рядом с суффиксом.
+     */
+    private fun uniqueName(raw: String): String {
+        val base = safeName(raw)
+        if (base != BUILTIN && !file(base).exists()) return base
+        for (n in 2..99) {
+            val candidate = safeName(base.take(34) + "-" + n)
+            if (candidate != BUILTIN && !file(candidate).exists()) return candidate
         }
-        joystick?.let { layer.addJoystickButton(it) }
-        Overlay.importNotes = skipped
-        return layout
+        return safeName(base.take(30) + "-" + (System.currentTimeMillis() % 100000))
     }
 
     /** Случайный uuid виджета в формате библиотеки. */

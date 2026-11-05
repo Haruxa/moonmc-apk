@@ -1050,11 +1050,20 @@ object Overlay {
             ImportDialog(
                 onDismiss = { picking = false },
                 onPick = { file ->
-                    val target = Controls.safeName(
-                        file.name.removeSuffix(".json").ifBlank { "import" }
-                    )
-                    val error = Controls.import(activity, file, target)
-                    note = error ?: "Импортировано: $target"
+                    val base = file.name.substringBeforeLast('.', file.name)
+                    val result = Controls.import(activity, file, base)
+                    note = if (result.error != null) {
+                        "Импорт не удался: " + result.error
+                    } else {
+                        buildString {
+                            append("Импортировано: ").append(result.profile)
+                            if (result.summary.isNotEmpty()) append("\n").append(result.summary)
+                            if (result.warnings.isNotEmpty()) {
+                                append("\nПредупреждений: ").append(result.warnings.size)
+                                append(" — подробности в moonmc-controls.txt")
+                            }
+                        }
+                    }
                     if (importNotes.isNotEmpty()) {
                         reportControls(activity, "импорт: " + importNotes.joinToString(", "))
                     }
@@ -1117,14 +1126,14 @@ object Overlay {
         )
         return dirs.flatMap { dir ->
             runCatching {
-                dir.listFiles { f -> f.isFile && f.name.endsWith(".json", ignoreCase = true) }
+                dir.listFiles { f -> f.isFile && (f.name.endsWith(".json", ignoreCase = true) || f.name.endsWith(".zip", ignoreCase = true)) }
                     ?.toList()
                     .orEmpty()
             }.getOrDefault(emptyList())
         }.sortedBy { it.name.lowercase() }
     }
 
-    /** Список найденных .json: тап — импорт выбранного файла. */
+    /** Список найденных .json/.zip: тап — импорт выбранного файла. */
     @Composable
     private fun ImportDialog(onDismiss: () -> Unit, onPick: (File) -> Unit) {
         var files by remember { mutableStateOf(importCandidates()) }
@@ -1135,7 +1144,7 @@ object Overlay {
                 Column(Modifier.fillMaxHeight(0.85f)) {
                     if (files.isEmpty()) {
                         Text(
-                            "В Download и /sdcard/MoonMC/controls нет .json",
+                            "В Download и /sdcard/MoonMC/controls нет .json или .zip",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
